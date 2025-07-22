@@ -1,0 +1,11 @@
+{
+  "name": "prompt-enhancer",
+  "version": "1.0.0",
+  "description": "A Chrome extension to enhance prompts on AI chat platforms.",
+  "keywords": [
+    "chrome-extension",
+    "prompt-engineering"
+  ],
+  "author": "",
+  "license": "MIT"
+}
