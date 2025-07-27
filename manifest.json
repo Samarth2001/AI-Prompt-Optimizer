@@ -20,7 +20,9 @@
         "*://chatgpt.com/*",
         "*://*.chatgpt.com/*",
         "*://gemini.google.com/*",
-        "*://*.gemini.google.com/*"
+        "*://*.gemini.google.com/*",
+        "*://grok.com/*",
+        "*://*.grok.com/*"
       ],
       "js": [
         "content.js"
@@ -38,7 +40,9 @@
         "*://chatgpt.com/*",
         "*://*.chatgpt.com/*",
         "*://gemini.google.com/*",
-        "*://*.gemini.google.com/*"
+        "*://*.gemini.google.com/*",
+        "*://grok.com/*",
+        "*://*.grok.com/*"
       ]
     }
   ],

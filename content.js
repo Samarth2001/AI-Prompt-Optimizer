@@ -14,12 +14,12 @@ function addGlobalCSS() {
       top: 8px !important;
       right: 8px !important;
       z-index: 9999 !important;
-      background: rgba(0, 0, 0, 0.2) !important;
-      border: 1px solid rgba(255, 255, 255, 0.2) !important;
+      background: transparent !important;
+      border: none !important;
       border-radius: 50% !important;
-      padding: 6px !important;
-      width: 28px !important;
-      height: 28px !important;
+      padding: 10px !important;
+      width: 44px !important;
+      height: 44px !important;
       cursor: pointer !important;
       transition: all 0.2s ease !important;
       display: flex !important;
@@ -70,6 +70,13 @@ const SITE_SELECTORS = {
     'textarea[placeholder*="Message"]',
     'textarea[data-id="root"]',
     'div[contenteditable="true"]'
+  ],
+  'grok.com': [
+    'textarea[placeholder*="Ask Grok"]',
+    'textarea[placeholder*="Message"]',
+    'div[contenteditable="true"]',
+    '[role="textbox"][contenteditable="true"]',
+    'textarea'
   ]
 };
 
@@ -184,7 +191,7 @@ function createEnhanceButton(textInput) {
   button.type = 'button';
 
   const iconUrl = chrome.runtime.getURL('icons/icon128.png');
-  button.innerHTML = `<img src="${iconUrl}" style="width: 14px; height: 14px;" alt="Enhance">`;
+  button.innerHTML = `<img src="${iconUrl}" style="width: 24px; height: 24px;" alt="Enhance">`;
   
   // Add hover effects
   button.addEventListener('mouseenter', () => {
@@ -193,7 +200,7 @@ function createEnhanceButton(textInput) {
   });
 
   button.addEventListener('mouseleave', () => {
-    button.style.background = 'rgba(0, 0, 0, 0.2) !important';
+    button.style.background = 'transparent !important';
     button.style.transform = 'scale(1)';
   });
 
@@ -284,9 +291,9 @@ function findTextInputs() {
     }
   });
 
-  // If no inputs found with specific selectors, try generic fallbacks for Claude
-  if (inputs.length === 0 && window.location.hostname.includes('claude.ai')) {
-    console.log('No inputs found with specific selectors, trying fallbacks for Claude...');
+  // If no inputs found with specific selectors, try generic fallbacks for Claude and Grok
+  if (inputs.length === 0 && (window.location.hostname.includes('claude.ai') || window.location.hostname.includes('grok.com'))) {
+    console.log('No inputs found with specific selectors, trying fallbacks for', window.location.hostname);
     const fallbackSelectors = [
       'textarea',
       'div[contenteditable="true"]',
