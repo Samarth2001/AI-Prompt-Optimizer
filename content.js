@@ -1,45 +1,78 @@
-// Add global CSS for enhance buttons
+// Add global CSS for the enhance button
 function addGlobalCSS() {
   if (document.getElementById('prompt-enhancer-css')) return;
-  
+
   const style = document.createElement('style');
   style.id = 'prompt-enhancer-css';
   style.textContent = `
+    .enhance-button-wrapper {
+      position: relative !important;
+      display: block !important;
+    }
+    .enhance-button {
+      position: absolute !important;
+      top: 8px !important;
+      right: 8px !important;
+      z-index: 9999 !important;
+      background: rgba(0, 0, 0, 0.2) !important;
+      border: 1px solid rgba(255, 255, 255, 0.2) !important;
+      border-radius: 50% !important;
+      padding: 6px !important;
+      width: 28px !important;
+      height: 28px !important;
+      cursor: pointer !important;
+      transition: all 0.2s ease !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      font-size: 12px !important;
+    }
     .enhance-button:hover {
+      background: rgba(0, 0, 0, 0.4) !important;
       transform: scale(1.1) !important;
     }
     .enhance-button:active {
       transform: scale(0.95) !important;
     }
-    /* Ensure button stays visible on dark themes */
-    .enhance-button {
+    .enhance-button img {
       filter: drop-shadow(0 0 3px rgba(0,0,0,0.5)) !important;
     }
   `;
   document.head.appendChild(style);
 }
 
-// Site-specific selectors for different AI platforms
+// Site-specific selectors for the main text input area
 const SITE_SELECTORS = {
   'claude.ai': [
+    'div.ProseMirror[contenteditable="true"]',
+    'div[contenteditable="true"][role="textbox"]',
+    'div[aria-label*="Write your prompt to Claude"]',
     'div[contenteditable="true"]',
-    'textarea',
-    '.ProseMirror'
+    'textarea[placeholder*="Talk to Claude"]',
+    'textarea[placeholder*="Message"]',
+    'textarea[data-testid*="chat"]',
+    '[role="textbox"][contenteditable="true"]',
+    'textarea'
   ],
   'gemini.google.com': [
+    '.ql-editor[contenteditable="true"]',
     'rich-textarea div[contenteditable="true"]',
     'textarea[placeholder*="Enter a prompt"]',
-    'textarea[placeholder*="Ask Gemini"]',
-    '.ql-editor'
+    'textarea[placeholder*="Ask Gemini"]'
   ],
   'chat.openai.com': [
-    'textarea[placeholder*="Message"]',
     '#prompt-textarea',
+    'textarea[placeholder*="Message"]',
     'textarea'
+  ],
+  'chatgpt.com': [
+    '#prompt-textarea',
+    'textarea[placeholder*="Message"]',
+    'textarea[data-id="root"]',
+    'div[contenteditable="true"]'
   ]
 };
 
-// Get current site's selectors
 function getSiteSelectors() {
   const hostname = window.location.hostname;
   for (const [site, selectors] of Object.entries(SITE_SELECTORS)) {
@@ -47,30 +80,10 @@ function getSiteSelectors() {
       return selectors;
     }
   }
-  // Default selectors for any site
-  return ['textarea', 'input[type="text"]', 'div[contenteditable="true"]'];
+   return null;
 }
 
-function findTextInputs() {
-  const selectors = getSiteSelectors();
-  const inputs = [];
-  
-  selectors.forEach(selector => {
-    try {
-      const elements = document.querySelectorAll(selector);
-      elements.forEach(element => {
-        // Filter out very small or hidden elements
-        if (element.offsetWidth > 100 && element.offsetHeight > 30) {
-          inputs.push(element);
-        }
-      });
-    } catch (e) {
-      console.log('Selector failed:', selector);
-    }
-  });
-  
-  return inputs;
-}
+// --- Core API and Button Logic ---
 
 function getStoredApiKey() {
   return new Promise((resolve) => {
@@ -127,17 +140,16 @@ async function enhancePrompt(prompt) {
 async function handleEnhanceClick(event) {
   event.preventDefault();
   event.stopPropagation();
-  
+
   const button = event.target.closest('.enhance-button');
-  const textInput = button.textInput; // Store reference when creating button
-  
+  const textInput = button.textInput;
+
   const currentText = getTextFromElement(textInput);
   if (!currentText.trim()) {
     alert('Please enter some text first!');
     return;
   }
 
-  // Update button state
   const originalContent = button.innerHTML;
   button.innerHTML = '<div style="font-size: 10px;">...</div>';
   button.style.opacity = '0.6';
@@ -147,64 +159,41 @@ async function handleEnhanceClick(event) {
     const enhancedPrompt = await enhancePrompt(currentText);
     if (enhancedPrompt) {
       setTextToElement(textInput, enhancedPrompt);
-      
-      // Success feedback
       button.innerHTML = '<div style="font-size: 10px; color: #28a745;">✓</div>';
-      setTimeout(() => {
-        button.innerHTML = originalContent;
-        button.style.opacity = '1';
-      }, 2000);
+    } else {
+      button.innerHTML = '<div style="font-size: 10px; color: #dc3545;">✗</div>';
     }
   } catch (error) {
     console.error('Enhancement failed:', error);
     button.innerHTML = '<div style="font-size: 10px; color: #dc3545;">✗</div>';
-    setTimeout(() => {
-      button.innerHTML = originalContent;
-      button.style.opacity = '1';
-    }, 2000);
   }
 
-  button.disabled = false;
+  setTimeout(() => {
+    button.innerHTML = originalContent;
+    button.style.opacity = '1';
+    button.disabled = false;
+  }, 2000);
 }
+
+// --- New Button Injection Logic ---
 
 function createEnhanceButton(textInput) {
   const button = document.createElement('button');
   button.className = 'enhance-button';
-  button.textInput = textInput; // Store reference
+  button.textInput = textInput;
   button.type = 'button';
-  
-  // Use extension icon
-  const iconUrl = chrome.runtime.getURL('icons/icon16.png');
+
+  const iconUrl = chrome.runtime.getURL('icons/icon128.png');
   button.innerHTML = `<img src="${iconUrl}" style="width: 14px; height: 14px;" alt="Enhance">`;
   
-  button.style.cssText = `
-    position: absolute !important;
-    top: 8px !important;
-    right: 8px !important;
-    z-index: 10000 !important;
-    background: transparent !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 50% !important;
-    padding: 6px !important;
-    width: 28px !important;
-    height: 28px !important;
-    cursor: pointer !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
-    transition: all 0.2s ease !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    font-size: 12px !important;
-  `;
-  
+  // Add hover effects
   button.addEventListener('mouseenter', () => {
-    button.style.background = '#0056b3 !important';
+    button.style.background = 'rgba(0, 0, 0, 0.4) !important';
     button.style.transform = 'scale(1.1)';
   });
-  
+
   button.addEventListener('mouseleave', () => {
-    button.style.background = '#007bff !important';
+    button.style.background = 'rgba(0, 0, 0, 0.2) !important';
     button.style.transform = 'scale(1)';
   });
 
@@ -213,33 +202,115 @@ function createEnhanceButton(textInput) {
 }
 
 function addEnhanceButton(textInput) {
-  // Skip if already enhanced
   if (textInput.dataset.enhanced === 'true') return;
   
-  // Create wrapper div
-  const wrapper = document.createElement('div');
-  wrapper.style.cssText = 'position: relative !important;';
-  
-  // Get the parent and insert wrapper
-  const parent = textInput.parentNode;
-  parent.insertBefore(wrapper, textInput);
-  wrapper.appendChild(textInput);
+  try {
+    textInput.dataset.enhanced = 'true';
+    console.log('Adding enhance button to:', textInput);
 
-  // Create and add button
-  const button = createEnhanceButton(textInput);
-  wrapper.appendChild(button);
-  
-  textInput.dataset.enhanced = 'true';
-  
-  // Store cleanup function
-  textInput._enhanceCleanup = () => {
-    if (wrapper.parentNode) {
-      wrapper.parentNode.insertBefore(textInput, wrapper);
-      wrapper.remove();
+    // Find the nearest positioned ancestor or create a wrapper
+    let parent = textInput.parentElement;
+    let wrapper;
+
+    // Walk up the DOM to find a suitable parent to position against
+    while (parent && parent.tagName !== 'BODY') {
+      const style = window.getComputedStyle(parent);
+      if (style.position === 'relative' || style.position === 'absolute' || style.position === 'fixed') {
+        wrapper = parent;
+        break;
+      }
+      parent = parent.parentElement;
     }
-    textInput.dataset.enhanced = 'false';
-    delete textInput._enhanceCleanup;
-  };
+
+    // If no suitable parent is found, wrap the text input
+    if (!wrapper) {
+      wrapper = document.createElement('div');
+      wrapper.className = 'enhance-button-wrapper';
+      textInput.parentNode.insertBefore(wrapper, textInput);
+      wrapper.appendChild(textInput);
+      console.log('Created wrapper for text input');
+    } else {
+      console.log('Using existing positioned parent:', wrapper);
+    }
+
+    const button = createEnhanceButton(textInput);
+    wrapper.appendChild(button);
+    console.log('Button added successfully');
+
+    // Store cleanup function
+    textInput._enhanceCleanup = () => {
+      button.remove();
+      // If we created a wrapper, unwrap it
+      if (wrapper.classList.contains('enhance-button-wrapper')) {
+          wrapper.parentNode.insertBefore(textInput, wrapper);
+          wrapper.remove();
+      }
+      delete textInput.dataset.enhanced;
+      delete textInput._enhanceCleanup;
+    };
+  } catch (error) {
+    console.error('Failed to add enhance button:', error);
+    delete textInput.dataset.enhanced;
+  }
+}
+
+function findTextInputs() {
+  const selectors = getSiteSelectors();
+  
+  // Only work on supported AI chat sites
+  if (!selectors) {
+    console.log('Prompt Enhancer: Site not supported -', window.location.hostname);
+    return [];
+  }
+  
+  const inputs = [];
+  console.log('Prompt Enhancer: Searching with selectors:', selectors);
+
+  selectors.forEach(selector => {
+    try {
+      const elements = document.querySelectorAll(selector);
+      console.log(`Selector "${selector}" found ${elements.length} elements`);
+      elements.forEach(element => {
+        // Filter out very small or hidden elements (Claude's textarea can be as short as 20px when empty)
+        if (element.offsetWidth > 50 && element.offsetHeight >= 18) {
+          console.log('Adding valid element:', element, `Size: ${element.offsetWidth}x${element.offsetHeight}`);
+          inputs.push(element);
+        } else {
+          console.log('Skipping small element:', element, `Size: ${element.offsetWidth}x${element.offsetHeight}`);
+        }
+      });
+    } catch (e) {
+      console.log('Selector failed:', selector, e);
+    }
+  });
+
+  // If no inputs found with specific selectors, try generic fallbacks for Claude
+  if (inputs.length === 0 && window.location.hostname.includes('claude.ai')) {
+    console.log('No inputs found with specific selectors, trying fallbacks for Claude...');
+    const fallbackSelectors = [
+      'textarea',
+      'div[contenteditable="true"]',
+      '[contenteditable="true"]',
+      'input[type="text"]'
+    ];
+    
+    fallbackSelectors.forEach(selector => {
+      try {
+        const elements = document.querySelectorAll(selector);
+        console.log(`Fallback selector "${selector}" found ${elements.length} elements`);
+        elements.forEach(element => {
+          if (element.offsetWidth > 50 && element.offsetHeight >= 18) {
+            console.log('Adding fallback element:', element);
+            inputs.push(element);
+          }
+        });
+      } catch (e) {
+        console.log('Fallback selector failed:', selector, e);
+      }
+    });
+  }
+
+  return inputs;
 }
 
 function processPage() {
@@ -248,26 +319,42 @@ function processPage() {
   textInputs.forEach(addEnhanceButton);
 }
 
-// Cleanup function for page navigation
 function cleanup() {
-  document.querySelectorAll('[data-enhanced="true"]').forEach(input => {
-    if (input._enhanceCleanup) {
-      input._enhanceCleanup();
-    }
-  });
+    const selectors = getSiteSelectors();
+    
+    // Only cleanup on supported AI chat sites
+    if (!selectors) return;
+    
+    selectors.forEach(selector => {
+        try {
+            document.querySelectorAll(selector).forEach(input => {
+                if (input._enhanceCleanup) {
+                    input._enhanceCleanup();
+                }
+            });
+        } catch (e) {
+            console.log('Cleanup selector failed:', selector);
+        }
+    });
 }
 
-// Watch for dynamically added elements (important for SPA sites)
+// --- Observer and Initializer ---
+
 const observer = new MutationObserver((mutations) => {
-  let shouldProcess = false;
+  const selectors = getSiteSelectors();
   
-  mutations.forEach((mutation) => {
-    mutation.addedNodes.forEach((node) => {
+  // Only observe on supported AI chat sites
+  if (!selectors) return;
+  
+  let needsProcessing = false;
+  
+  for (const mutation of mutations) {
+    for (const node of mutation.addedNodes) {
       if (node.nodeType === Node.ELEMENT_NODE) {
-        const selectors = getSiteSelectors();
+        // Check if the new node itself is the input, or contains the input
         const hasTextInput = selectors.some(selector => {
           try {
-            return node.matches && node.matches(selector) || 
+            return node.matches && node.matches(selector) ||
                    node.querySelectorAll && node.querySelectorAll(selector).length > 0;
           } catch (e) {
             return false;
@@ -275,33 +362,48 @@ const observer = new MutationObserver((mutations) => {
         });
         
         if (hasTextInput) {
-          shouldProcess = true;
+          needsProcessing = true;
+          break;
         }
       }
-    });
-  });
-  
-  if (shouldProcess) {
-    setTimeout(processPage, 500); // Small delay for dynamic content
+    }
+    if (needsProcessing) break;
+  }
+
+  if (needsProcessing) {
+    // Use a timeout to allow the page to finish rendering
+    setTimeout(processPage, 500);
   }
 });
 
-// Start observing
-observer.observe(document.body, {
-  childList: true,
-  subtree: true
-});
-
-// Process existing elements
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
+function initialize() {
+    console.log('Prompt Enhancer: Checking site -', window.location.hostname);
+    
+    // Only initialize on supported AI chat sites
+    const selectors = getSiteSelectors();
+    if (!selectors) {
+        console.log('Prompt Enhancer: Site not supported, extension will not activate');
+        return;
+    }
+    
+    console.log('Prompt Enhancer: Initializing on supported AI site -', window.location.hostname);
     addGlobalCSS();
-    setTimeout(processPage, 1000);
-  });
-} else {
-  addGlobalCSS();
-  setTimeout(processPage, 1000);
+    
+    // Initial run with a small delay to ensure page is loaded
+    setTimeout(() => {
+        processPage();
+    }, 1000);
+    
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+    
+    console.log('Prompt Enhancer: Initialization complete');
 }
+
+// Start the process
+initialize();
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', cleanup);
@@ -315,4 +417,4 @@ new MutationObserver(() => {
     cleanup();
     setTimeout(processPage, 2000);
   }
-}).observe(document, { subtree: true, childList: true }); 
+}).observe(document, { subtree: true, childList: true });
