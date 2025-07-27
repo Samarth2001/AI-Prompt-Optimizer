@@ -1,3 +1,7 @@
+// ============================================================================
+// CONFIGURATION MODULE - Site-specific styling and selectors
+// ============================================================================
+
 // Site-specific styling configurations
 const SITE_STYLES = {
   'claude.ai': {
@@ -47,76 +51,6 @@ const SITE_STYLES = {
   }
 };
 
-// Get site-specific styling
-function getSiteStyle() {
-  const hostname = window.location.hostname;
-  for (const [site, style] of Object.entries(SITE_STYLES)) {
-    if (hostname.includes(site)) {
-      return style;
-    }
-  }
-  // Default fallback style
-  return {
-    position: { top: '10px', right: '10px' },
-    background: 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%)',
-    hoverBackground: 'linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%)',
-    borderRadius: '12px',
-    size: { width: '36px', height: '36px' },
-    shadow: '0 4px 15px rgba(107, 114, 128, 0.3)',
-    hoverShadow: '0 8px 25px rgba(255, 107, 107, 0.5)'
-  };
-}
-
-// Add global CSS for the enhance button with site-specific styling
-function addGlobalCSS() {
-  if (document.getElementById('prompt-enhancer-css')) return;
-
-  const siteStyle = getSiteStyle();
-  
-  const style = document.createElement('style');
-  style.id = 'prompt-enhancer-css';
-  style.textContent = `
-    .enhance-button-wrapper {
-      position: relative !important;
-      display: block !important;
-    }
-    .enhance-button {
-      position: absolute !important;
-      top: ${siteStyle.position.top} !important;
-      right: ${siteStyle.position.right} !important;
-      z-index: 9999 !important;
-      background: ${siteStyle.background} !important;
-      border: none !important;
-      border-radius: ${siteStyle.borderRadius} !important;
-      padding: 8px !important;
-      width: ${siteStyle.size.width} !important;
-      height: ${siteStyle.size.height} !important;
-      cursor: pointer !important;
-      transition: all 0.3s ease !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      box-shadow: ${siteStyle.shadow} !important;
-    }
-    .enhance-button:hover {
-      background: ${siteStyle.hoverBackground} !important;
-      transform: translateY(-2px) scale(1.05) !important;
-      box-shadow: ${siteStyle.hoverShadow} !important;
-    }
-    .enhance-button:active {
-      transform: translateY(0px) scale(1) !important;
-      box-shadow: ${siteStyle.shadow} !important;
-    }
-    .enhance-button svg {
-      width: 18px !important;
-      height: 18px !important;
-      fill: white !important;
-      transition: all 0.3s ease !important;
-    }
-  `;
-  document.head.appendChild(style);
-}
-
 // Site-specific selectors for the main text input area
 const SITE_SELECTORS = {
   'claude.ai': [
@@ -156,6 +90,27 @@ const SITE_SELECTORS = {
   ]
 };
 
+// Get site-specific styling
+function getSiteStyle() {
+  const hostname = window.location.hostname;
+  for (const [site, style] of Object.entries(SITE_STYLES)) {
+    if (hostname.includes(site)) {
+      return style;
+    }
+  }
+  // Default fallback style
+  return {
+    position: { top: '10px', right: '10px' },
+    background: 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%)',
+    hoverBackground: 'linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%)',
+    borderRadius: '12px',
+    size: { width: '36px', height: '36px' },
+    shadow: '0 4px 15px rgba(107, 114, 128, 0.3)',
+    hoverShadow: '0 8px 25px rgba(255, 107, 107, 0.5)'
+  };
+}
+
+// Get site-specific selectors
 function getSiteSelectors() {
   const hostname = window.location.hostname;
   for (const [site, selectors] of Object.entries(SITE_SELECTORS)) {
@@ -163,18 +118,12 @@ function getSiteSelectors() {
       return selectors;
     }
   }
-   return null;
+  return null;
 }
 
-// --- Core API and Button Logic ---
-
-function getStoredApiKey() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(['apiKey'], (result) => {
-      resolve(result.apiKey || null);
-    });
-  });
-}
+// ============================================================================
+// DOM UTILITIES MODULE - DOM manipulation and helper functions
+// ============================================================================
 
 function getTextFromElement(element) {
   if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
@@ -194,154 +143,6 @@ function setTextToElement(element, text) {
     element.textContent = text;
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('keyup', { bubbles: true }));
-  }
-}
-
-async function enhancePrompt(prompt) {
-  const apiKey = await getStoredApiKey();
-  if (!apiKey) {
-    alert('Please set your API key in the extension popup first!');
-    return null;
-  }
-
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(
-      { action: 'enhancePrompt', apiKey, prompt },
-      (response) => {
-        if (response && response.success) {
-          resolve(response.enhancedPrompt);
-        } else {
-          console.error('Enhancement failed:', response?.error);
-          alert('Enhancement failed: ' + (response?.error || 'Unknown error'));
-          resolve(null);
-        }
-      }
-    );
-  });
-}
-
-async function handleEnhanceClick(event) {
-  event.preventDefault();
-  event.stopPropagation();
-
-  const button = event.target.closest('.enhance-button');
-  const textInput = button.textInput;
-
-  const currentText = getTextFromElement(textInput);
-  if (!currentText.trim()) {
-    alert('Please enter some text first!');
-    return;
-  }
-
-  const originalContent = button.innerHTML;
-  button.innerHTML = '<div style="font-size: 10px;">...</div>';
-  button.style.opacity = '0.6';
-  button.disabled = true;
-
-  try {
-    const enhancedPrompt = await enhancePrompt(currentText);
-    if (enhancedPrompt) {
-      setTextToElement(textInput, enhancedPrompt);
-      button.innerHTML = '<div style="font-size: 10px; color: #28a745;">✓</div>';
-    } else {
-      button.innerHTML = '<div style="font-size: 10px; color: #dc3545;">✗</div>';
-    }
-  } catch (error) {
-    console.error('Enhancement failed:', error);
-    button.innerHTML = '<div style="font-size: 10px; color: #dc3545;">✗</div>';
-  }
-
-  setTimeout(() => {
-    button.innerHTML = originalContent;
-    button.style.opacity = '1';
-    button.disabled = false;
-  }, 2000);
-}
-
-// --- New Button Injection Logic ---
-
-function createEnhanceButton(textInput) {
-  const button = document.createElement('button');
-  button.className = 'enhance-button';
-  button.textInput = textInput;
-  button.type = 'button';
-
-  const siteStyle = getSiteStyle();
-
-  // Use SVG magic wand icon instead of PNG
-  button.innerHTML = `
-    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path d="M7.5 5.6L10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7zm12 9.8L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14zM22 2l-2.5 1.4L17 2l1.4 2.5L17 7l2.5-1.4L22 7l-1.4-2.5zm-7.63 5.29c-.39-.39-1.02-.39-1.41 0L1.29 18.96c-.39.39-.39 1.02 0 1.41l2.34 2.34c.39.39 1.02.39 1.41 0L16.7 10.05c.39-.39.39-1.02 0-1.41l-2.33-2.35z"/>
-    </svg>
-  `;
-  
-  // Add hover effects with site-specific colors
-  button.addEventListener('mouseenter', () => {
-    button.style.background = siteStyle.hoverBackground + ' !important';
-    button.style.transform = 'translateY(-2px) scale(1.05)';
-    button.style.boxShadow = siteStyle.hoverShadow + ' !important';
-  });
-
-  button.addEventListener('mouseleave', () => {
-    button.style.background = siteStyle.background + ' !important';
-    button.style.transform = 'translateY(0px) scale(1)';
-    button.style.boxShadow = siteStyle.shadow + ' !important';
-  });
-
-  button.addEventListener('click', handleEnhanceClick);
-  return button;
-}
-
-function addEnhanceButton(textInput) {
-  if (textInput.dataset.enhanced === 'true') return;
-  
-  try {
-    textInput.dataset.enhanced = 'true';
-    console.log('Adding enhance button to:', textInput);
-
-    // Find the nearest positioned ancestor or create a wrapper
-    let parent = textInput.parentElement;
-    let wrapper;
-
-    // Walk up the DOM to find a suitable parent to position against
-    while (parent && parent.tagName !== 'BODY') {
-      const style = window.getComputedStyle(parent);
-      if (style.position === 'relative' || style.position === 'absolute' || style.position === 'fixed') {
-        wrapper = parent;
-        break;
-      }
-      parent = parent.parentElement;
-    }
-
-    // If no suitable parent is found, wrap the text input
-    if (!wrapper) {
-      wrapper = document.createElement('div');
-      wrapper.className = 'enhance-button-wrapper';
-      textInput.parentNode.insertBefore(wrapper, textInput);
-      wrapper.appendChild(textInput);
-      console.log('Created wrapper for text input');
-    } else {
-      console.log('Using existing positioned parent:', wrapper);
-    }
-
-    const button = createEnhanceButton(textInput);
-    wrapper.appendChild(button);
-    console.log('Button added successfully');
-
-    // Store cleanup function
-    textInput._enhanceCleanup = () => {
-      button.remove();
-      // If we created a wrapper, unwrap it
-      if (wrapper.classList.contains('enhance-button-wrapper')) {
-          wrapper.parentNode.insertBefore(textInput, wrapper);
-          wrapper.remove();
-      }
-      delete textInput.dataset.enhanced;
-      delete textInput._enhanceCleanup;
-    };
-  } catch (error) {
-    console.error('Failed to add enhance button:', error);
-    delete textInput.dataset.enhanced;
   }
 }
 
@@ -404,29 +205,254 @@ function findTextInputs() {
   return inputs;
 }
 
+function findPositionedParent(textInput) {
+  let parent = textInput.parentElement;
+  
+  // Walk up the DOM to find a suitable parent to position against
+  while (parent && parent.tagName !== 'BODY') {
+    const style = window.getComputedStyle(parent);
+    if (style.position === 'relative' || style.position === 'absolute' || style.position === 'fixed') {
+      return parent;
+    }
+    parent = parent.parentElement;
+  }
+  
+  return null;
+}
+
+function createWrapper(textInput) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'enhance-button-wrapper';
+  textInput.parentNode.insertBefore(wrapper, textInput);
+  wrapper.appendChild(textInput);
+  console.log('Created wrapper for text input');
+  return wrapper;
+}
+
+function cleanup() {
+  const selectors = getSiteSelectors();
+  
+  // Only cleanup on supported AI chat sites
+  if (!selectors) return;
+  
+  selectors.forEach(selector => {
+    try {
+      document.querySelectorAll(selector).forEach(input => {
+        if (input._enhanceCleanup) {
+          input._enhanceCleanup();
+        }
+      });
+    } catch (e) {
+      console.log('Cleanup selector failed:', selector);
+    }
+  });
+}
+
+// ============================================================================
+// API SERVICE MODULE - Prompt enhancement communication
+// ============================================================================
+
+function getStoredApiKey() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['apiKey'], (result) => {
+      resolve(result.apiKey || null);
+    });
+  });
+}
+
+async function enhancePrompt(prompt) {
+  const apiKey = await getStoredApiKey();
+  if (!apiKey) {
+    alert('Please set your API key in the extension popup first!');
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { action: 'enhancePrompt', apiKey, prompt },
+      (response) => {
+        if (response && response.success) {
+          resolve(response.enhancedPrompt);
+        } else {
+          console.error('Enhancement failed:', response?.error);
+          alert('Enhancement failed: ' + (response?.error || 'Unknown error'));
+          resolve(null);
+        }
+      }
+    );
+  });
+}
+
+// ============================================================================
+// BUTTON COMPONENT MODULE - Enhance button creation and styling
+// ============================================================================
+
+// Add global CSS for the enhance button with site-specific styling
+function addGlobalCSS() {
+  if (document.getElementById('prompt-enhancer-css')) return;
+
+  const siteStyle = getSiteStyle();
+  
+  const style = document.createElement('style');
+  style.id = 'prompt-enhancer-css';
+  style.textContent = `
+    .enhance-button-wrapper {
+      position: relative !important;
+      display: block !important;
+    }
+    .enhance-button {
+      position: absolute !important;
+      top: ${siteStyle.position.top} !important;
+      right: ${siteStyle.position.right} !important;
+      z-index: 9999 !important;
+      background: ${siteStyle.background} !important;
+      border: none !important;
+      border-radius: ${siteStyle.borderRadius} !important;
+      padding: 8px !important;
+      width: ${siteStyle.size.width} !important;
+      height: ${siteStyle.size.height} !important;
+      cursor: pointer !important;
+      transition: all 0.3s ease !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      box-shadow: ${siteStyle.shadow} !important;
+    }
+    .enhance-button:hover {
+      background: ${siteStyle.hoverBackground} !important;
+      transform: translateY(-2px) scale(1.05) !important;
+      box-shadow: ${siteStyle.hoverShadow} !important;
+    }
+    .enhance-button:active {
+      transform: translateY(0px) scale(1) !important;
+      box-shadow: ${siteStyle.shadow} !important;
+    }
+    .enhance-button svg {
+      width: 18px !important;
+      height: 18px !important;
+      fill: white !important;
+      transition: all 0.3s ease !important;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+async function handleEnhanceClick(event) {
+  event.preventDefault();
+  event.stopPropagation();
+
+  const button = event.target.closest('.enhance-button');
+  const textInput = button.textInput;
+
+  const currentText = getTextFromElement(textInput);
+  if (!currentText.trim()) {
+    alert('Please enter some text first!');
+    return;
+  }
+
+  const originalContent = button.innerHTML;
+  button.innerHTML = '<div style="font-size: 10px;">...</div>';
+  button.style.opacity = '0.6';
+  button.disabled = true;
+
+  try {
+    const enhancedPrompt = await enhancePrompt(currentText);
+    if (enhancedPrompt) {
+      setTextToElement(textInput, enhancedPrompt);
+      button.innerHTML = '<div style="font-size: 10px; color: #28a745;">✓</div>';
+    } else {
+      button.innerHTML = '<div style="font-size: 10px; color: #dc3545;">✗</div>';
+    }
+  } catch (error) {
+    console.error('Enhancement failed:', error);
+    button.innerHTML = '<div style="font-size: 10px; color: #dc3545;">✗</div>';
+  }
+
+  setTimeout(() => {
+    button.innerHTML = originalContent;
+    button.style.opacity = '1';
+    button.disabled = false;
+  }, 2000);
+}
+
+function createEnhanceButton(textInput) {
+  const button = document.createElement('button');
+  button.className = 'enhance-button';
+  button.textInput = textInput;
+  button.type = 'button';
+
+  const siteStyle = getSiteStyle();
+
+  // Use SVG magic wand icon instead of PNG
+  button.innerHTML = `
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M7.5 5.6L10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7zm12 9.8L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14zM22 2l-2.5 1.4L17 2l1.4 2.5L17 7l2.5-1.4L22 7l-1.4-2.5zm-7.63 5.29c-.39-.39-1.02-.39-1.41 0L1.29 18.96c-.39.39-.39 1.02 0 1.41l2.34 2.34c.39.39 1.02.39 1.41 0L16.7 10.05c.39-.39.39-1.02 0-1.41l-2.33-2.35z"/>
+    </svg>
+  `;
+  
+  // Add hover effects with site-specific colors
+  button.addEventListener('mouseenter', () => {
+    button.style.background = siteStyle.hoverBackground + ' !important';
+    button.style.transform = 'translateY(-2px) scale(1.05)';
+    button.style.boxShadow = siteStyle.hoverShadow + ' !important';
+  });
+
+  button.addEventListener('mouseleave', () => {
+    button.style.background = siteStyle.background + ' !important';
+    button.style.transform = 'translateY(0px) scale(1)';
+    button.style.boxShadow = siteStyle.shadow + ' !important';
+  });
+
+  button.addEventListener('click', handleEnhanceClick);
+  return button;
+}
+
+function addEnhanceButton(textInput) {
+  if (textInput.dataset.enhanced === 'true') return;
+  
+  try {
+    textInput.dataset.enhanced = 'true';
+    console.log('Adding enhance button to:', textInput);
+
+    // Find the nearest positioned ancestor or create a wrapper
+    let wrapper = findPositionedParent(textInput);
+
+    // If no suitable parent is found, wrap the text input
+    if (!wrapper) {
+      wrapper = createWrapper(textInput);
+    } else {
+      console.log('Using existing positioned parent:', wrapper);
+    }
+
+    const button = createEnhanceButton(textInput);
+    wrapper.appendChild(button);
+    console.log('Button added successfully');
+
+    // Store cleanup function
+    textInput._enhanceCleanup = () => {
+      button.remove();
+      // If we created a wrapper, unwrap it
+      if (wrapper.classList.contains('enhance-button-wrapper')) {
+          wrapper.parentNode.insertBefore(textInput, wrapper);
+          wrapper.remove();
+      }
+      delete textInput.dataset.enhanced;
+      delete textInput._enhanceCleanup;
+    };
+  } catch (error) {
+    console.error('Failed to add enhance button:', error);
+    delete textInput.dataset.enhanced;
+  }
+}
+
+// ============================================================================
+// MAIN INITIALIZATION MODULE - Entry point and page management
+// ============================================================================
+
 function processPage() {
   const textInputs = findTextInputs();
   console.log(`Found ${textInputs.length} text inputs on ${window.location.hostname}`);
   textInputs.forEach(addEnhanceButton);
-}
-
-function cleanup() {
-    const selectors = getSiteSelectors();
-    
-    // Only cleanup on supported AI chat sites
-    if (!selectors) return;
-    
-    selectors.forEach(selector => {
-        try {
-            document.querySelectorAll(selector).forEach(input => {
-                if (input._enhanceCleanup) {
-                    input._enhanceCleanup();
-                }
-            });
-        } catch (e) {
-            console.log('Cleanup selector failed:', selector);
-        }
-    });
 }
 
 // --- Observer and Initializer ---
