@@ -1,7 +1,78 @@
-// Add global CSS for the enhance button
+// Site-specific styling configurations
+const SITE_STYLES = {
+  'claude.ai': {
+    position: { top: '10px', right: '10px' },
+    background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)', // Claude's warm orange theme
+    hoverBackground: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+    borderRadius: '8px',
+    size: { width: '32px', height: '32px' },
+    shadow: '0 2px 8px rgba(217, 119, 6, 0.3)',
+    hoverShadow: '0 4px 16px rgba(245, 158, 11, 0.5)'
+  },
+  'gemini.google.com': {
+    position: { top: '8px', right: '8px' },
+    background: 'linear-gradient(135deg, #4285f4 0%, #1a73e8 100%)', // Google Blue
+    hoverBackground: 'linear-gradient(135deg, #5a9cff 0%, #4285f4 100%)',
+    borderRadius: '50%', // Circular for Google's design
+    size: { width: '36px', height: '36px' },
+    shadow: '0 2px 12px rgba(66, 133, 244, 0.3)',
+    hoverShadow: '0 4px 20px rgba(90, 156, 255, 0.5)'
+  },
+  'chat.openai.com': {
+    position: { top: '12px', right: '12px' },
+    background: 'linear-gradient(135deg, #10a37f 0%, #0d8a6b 100%)', // OpenAI Green
+    hoverBackground: 'linear-gradient(135deg, #1db584 0%, #10a37f 100%)',
+    borderRadius: '6px',
+    size: { width: '34px', height: '34px' },
+    shadow: '0 3px 10px rgba(16, 163, 127, 0.3)',
+    hoverShadow: '0 6px 20px rgba(29, 181, 132, 0.5)'
+  },
+  'chatgpt.com': {
+    position: { top: '12px', right: '12px' },
+    background: 'linear-gradient(135deg, #10a37f 0%, #0d8a6b 100%)', // OpenAI Green
+    hoverBackground: 'linear-gradient(135deg, #1db584 0%, #10a37f 100%)',
+    borderRadius: '6px',
+    size: { width: '34px', height: '34px' },
+    shadow: '0 3px 10px rgba(16, 163, 127, 0.3)',
+    hoverShadow: '0 6px 20px rgba(29, 181, 132, 0.5)'
+  },
+  'grok.com': {
+    position: { top: '10px', right: '10px' },
+    background: 'linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%)', // X/Twitter Blue
+    hoverBackground: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+    borderRadius: '10px',
+    size: { width: '36px', height: '36px' },
+    shadow: '0 4px 12px rgba(29, 78, 216, 0.3)',
+    hoverShadow: '0 6px 24px rgba(59, 130, 246, 0.5)'
+  }
+};
+
+// Get site-specific styling
+function getSiteStyle() {
+  const hostname = window.location.hostname;
+  for (const [site, style] of Object.entries(SITE_STYLES)) {
+    if (hostname.includes(site)) {
+      return style;
+    }
+  }
+  // Default fallback style
+  return {
+    position: { top: '10px', right: '10px' },
+    background: 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%)',
+    hoverBackground: 'linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%)',
+    borderRadius: '12px',
+    size: { width: '36px', height: '36px' },
+    shadow: '0 4px 15px rgba(107, 114, 128, 0.3)',
+    hoverShadow: '0 8px 25px rgba(255, 107, 107, 0.5)'
+  };
+}
+
+// Add global CSS for the enhance button with site-specific styling
 function addGlobalCSS() {
   if (document.getElementById('prompt-enhancer-css')) return;
 
+  const siteStyle = getSiteStyle();
+  
   const style = document.createElement('style');
   style.id = 'prompt-enhancer-css';
   style.textContent = `
@@ -11,30 +82,30 @@ function addGlobalCSS() {
     }
     .enhance-button {
       position: absolute !important;
-      top: 10px !important;
-      right: 10px !important;
+      top: ${siteStyle.position.top} !important;
+      right: ${siteStyle.position.right} !important;
       z-index: 9999 !important;
-      background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%) !important;
+      background: ${siteStyle.background} !important;
       border: none !important;
-      border-radius: 12px !important;
+      border-radius: ${siteStyle.borderRadius} !important;
       padding: 8px !important;
-      width: 36px !important;
-      height: 36px !important;
+      width: ${siteStyle.size.width} !important;
+      height: ${siteStyle.size.height} !important;
       cursor: pointer !important;
       transition: all 0.3s ease !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
-      box-shadow: 0 4px 15px rgba(107, 114, 128, 0.3) !important;
+      box-shadow: ${siteStyle.shadow} !important;
     }
     .enhance-button:hover {
-      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%) !important;
+      background: ${siteStyle.hoverBackground} !important;
       transform: translateY(-2px) scale(1.05) !important;
-      box-shadow: 0 8px 25px rgba(255, 107, 107, 0.5) !important;
+      box-shadow: ${siteStyle.hoverShadow} !important;
     }
     .enhance-button:active {
       transform: translateY(0px) scale(1) !important;
-      box-shadow: 0 4px 15px rgba(107, 114, 128, 0.3) !important;
+      box-shadow: ${siteStyle.shadow} !important;
     }
     .enhance-button svg {
       width: 18px !important;
@@ -195,6 +266,8 @@ function createEnhanceButton(textInput) {
   button.textInput = textInput;
   button.type = 'button';
 
+  const siteStyle = getSiteStyle();
+
   // Use SVG magic wand icon instead of PNG
   button.innerHTML = `
     <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -202,17 +275,17 @@ function createEnhanceButton(textInput) {
     </svg>
   `;
   
-  // Add hover effects
+  // Add hover effects with site-specific colors
   button.addEventListener('mouseenter', () => {
-    button.style.background = 'linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%) !important';
+    button.style.background = siteStyle.hoverBackground + ' !important';
     button.style.transform = 'translateY(-2px) scale(1.05)';
-    button.style.boxShadow = '0 8px 25px rgba(255, 107, 107, 0.5) !important';
+    button.style.boxShadow = siteStyle.hoverShadow + ' !important';
   });
 
   button.addEventListener('mouseleave', () => {
-    button.style.background = 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%) !important';
+    button.style.background = siteStyle.background + ' !important';
     button.style.transform = 'translateY(0px) scale(1)';
-    button.style.boxShadow = '0 4px 15px rgba(107, 114, 128, 0.3) !important';
+    button.style.boxShadow = siteStyle.shadow + ' !important';
   });
 
   button.addEventListener('click', handleEnhanceClick);
