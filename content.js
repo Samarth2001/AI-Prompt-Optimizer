@@ -11,31 +11,36 @@ function addGlobalCSS() {
     }
     .enhance-button {
       position: absolute !important;
-      top: 8px !important;
-      right: 8px !important;
+      top: 10px !important;
+      right: 10px !important;
       z-index: 9999 !important;
-      background: transparent !important;
+      background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%) !important;
       border: none !important;
-      border-radius: 50% !important;
-      padding: 10px !important;
-      width: 44px !important;
-      height: 44px !important;
+      border-radius: 12px !important;
+      padding: 8px !important;
+      width: 36px !important;
+      height: 36px !important;
       cursor: pointer !important;
-      transition: all 0.2s ease !important;
+      transition: all 0.3s ease !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
-      font-size: 12px !important;
+      box-shadow: 0 4px 15px rgba(107, 114, 128, 0.3) !important;
     }
     .enhance-button:hover {
-      background: rgba(0, 0, 0, 0.4) !important;
-      transform: scale(1.1) !important;
+      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%) !important;
+      transform: translateY(-2px) scale(1.05) !important;
+      box-shadow: 0 8px 25px rgba(255, 107, 107, 0.5) !important;
     }
     .enhance-button:active {
-      transform: scale(0.95) !important;
+      transform: translateY(0px) scale(1) !important;
+      box-shadow: 0 4px 15px rgba(107, 114, 128, 0.3) !important;
     }
-    .enhance-button img {
-      filter: drop-shadow(0 0 3px rgba(0,0,0,0.5)) !important;
+    .enhance-button svg {
+      width: 18px !important;
+      height: 18px !important;
+      fill: white !important;
+      transition: all 0.3s ease !important;
     }
   `;
   document.head.appendChild(style);
@@ -190,18 +195,24 @@ function createEnhanceButton(textInput) {
   button.textInput = textInput;
   button.type = 'button';
 
-  const iconUrl = chrome.runtime.getURL('icons/icon128.png');
-  button.innerHTML = `<img src="${iconUrl}" style="width: 24px; height: 24px;" alt="Enhance">`;
+  // Use SVG magic wand icon instead of PNG
+  button.innerHTML = `
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M7.5 5.6L10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7zm12 9.8L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14zM22 2l-2.5 1.4L17 2l1.4 2.5L17 7l2.5-1.4L22 7l-1.4-2.5zm-7.63 5.29c-.39-.39-1.02-.39-1.41 0L1.29 18.96c-.39.39-.39 1.02 0 1.41l2.34 2.34c.39.39 1.02.39 1.41 0L16.7 10.05c.39-.39.39-1.02 0-1.41l-2.33-2.35z"/>
+    </svg>
+  `;
   
   // Add hover effects
   button.addEventListener('mouseenter', () => {
-    button.style.background = 'rgba(0, 0, 0, 0.4) !important';
-    button.style.transform = 'scale(1.1)';
+    button.style.background = 'linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%) !important';
+    button.style.transform = 'translateY(-2px) scale(1.05)';
+    button.style.boxShadow = '0 8px 25px rgba(255, 107, 107, 0.5) !important';
   });
 
   button.addEventListener('mouseleave', () => {
-    button.style.background = 'transparent !important';
-    button.style.transform = 'scale(1)';
+    button.style.background = 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%) !important';
+    button.style.transform = 'translateY(0px) scale(1)';
+    button.style.boxShadow = '0 4px 15px rgba(107, 114, 128, 0.3) !important';
   });
 
   button.addEventListener('click', handleEnhanceClick);
