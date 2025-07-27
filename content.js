@@ -36,20 +36,6 @@ const SITE_SELECTORS = {
     'textarea[placeholder*="Message"]',
     '#prompt-textarea',
     'textarea'
-  ],
-  'bard.google.com': [
-    'rich-textarea div[contenteditable="true"]',
-    'textarea',
-    '.ql-editor'
-  ],
-  'poe.com': [
-    'textarea[placeholder*="Talk"]',
-    'textarea',
-    '.ChatMessageInputContainer textarea'
-  ],
-  'character.ai': [
-    'textarea[placeholder*="Type"]',
-    'textarea'
   ]
 };
 
@@ -196,7 +182,7 @@ function createEnhanceButton(textInput) {
     top: 8px !important;
     right: 8px !important;
     z-index: 10000 !important;
-    background: #007bff !important;
+    background: transparent !important;
     color: white !important;
     border: none !important;
     border-radius: 50% !important;
