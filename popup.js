@@ -5,20 +5,24 @@ document.addEventListener("DOMContentLoaded", async () => {
   const apiKeyInput = document.getElementById("api-key-input");
   const saveKeyButton = document.getElementById("save-key-button");
   const clearKeyButton = document.getElementById("clear-key-button");
+  const toggleInputButton = document.getElementById("toggle-input-button");
   const statusMessage = document.getElementById("status-message");
+  const inputContainer = document.getElementById("input-container");
+  const apiStatus = document.getElementById("api-status");
+  const statusDot = document.getElementById("status-dot");
+  const statusText = document.getElementById("status-text");
 
   // Load saved API key on startup
   try {
     const hasKey = await secureStorageService.hasStoredApiKey();
     if (hasKey) {
-      apiKeyInput.placeholder = "API key is stored securely";
-      clearKeyButton.style.display = "inline-block";
-      showStatus("API key loaded", "info");
+      setApiKeyState(true);
+      showStatus("API key loaded securely", "info");
     } else {
-      clearKeyButton.style.display = "none";
+      setApiKeyState(false);
     }
   } catch (error) {
-    clearKeyButton.style.display = "none";
+    setApiKeyState(false);
     showStatus("Error loading API key", "error");
   }
 
@@ -40,8 +44,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       await secureStorageService.storeApiKey(apiKey);
       apiKeyInput.value = "";
-      apiKeyInput.placeholder = "API key stored securely";
-      clearKeyButton.style.display = "inline-block";
+      setApiKeyState(true);
       showStatus("API key saved and encrypted successfully!", "success");
     } catch (error) {
       showStatus(`Failed to save API key: ${error.message}`, "error");
@@ -53,22 +56,91 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       await secureStorageService.clearApiKey();
       apiKeyInput.value = "";
-      apiKeyInput.placeholder = "sk-or-v1-...";
-      clearKeyButton.style.display = "none";
+      setApiKeyState(false);
       showStatus("API key cleared successfully!", "success");
     } catch (error) {
       showStatus(`Failed to clear API key: ${error.message}`, "error");
     }
   });
 
+  // Toggle input visibility
+  toggleInputButton.addEventListener("click", () => {
+    showInputField();
+  });
+
+  // Handle Enter key in input
+  apiKeyInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") {
+      saveKeyButton.click();
+    }
+  });
+
+  function setApiKeyState(hasKey) {
+    if (hasKey) {
+      // API key is stored
+      hideInputField();
+      updateApiStatus("Configured", false);
+      toggleInputButton.classList.remove("hidden");
+      clearKeyButton.classList.remove("hidden");
+      apiKeyInput.placeholder = "••••••••••••••••••••••••••••••••";
+      apiKeyInput.classList.add("masked");
+    } else {
+      // No API key
+      showInputField();
+      updateApiStatus("No key", true);
+      toggleInputButton.classList.add("hidden");
+      clearKeyButton.classList.add("hidden");
+      apiKeyInput.placeholder = "Enter your OpenRouter API key";
+      apiKeyInput.classList.remove("masked");
+    }
+  }
+
+  function updateApiStatus(text, isEmpty) {
+    statusText.textContent = text;
+    
+    if (isEmpty) {
+      statusDot.classList.add("empty");
+      statusText.classList.add("empty");
+    } else {
+      statusDot.classList.remove("empty");
+      statusText.classList.remove("empty");
+    }
+    
+    // Show status with animation
+    apiStatus.classList.add("show");
+  }
+
+  function hideInputField() {
+    inputContainer.classList.remove("expanded");
+    inputContainer.classList.add("collapsed");
+  }
+
+  function showInputField() {
+    inputContainer.classList.remove("collapsed");
+    inputContainer.classList.add("expanded");
+    
+    // Focus input after animation
+    setTimeout(() => {
+      apiKeyInput.focus();
+    }, 200);
+  }
+
   function showStatus(message, type) {
     statusMessage.textContent = message;
     statusMessage.className = `status ${type}`;
     
-    if (type === "success") {
+    // Add show class for animation
+    setTimeout(() => {
+      statusMessage.classList.add("show");
+    }, 50);
+    
+    if (type === "success" || type === "info") {
       setTimeout(() => {
-        statusMessage.textContent = "";
-        statusMessage.className = "";
+        statusMessage.classList.remove("show");
+        setTimeout(() => {
+          statusMessage.textContent = "";
+          statusMessage.className = "status";
+        }, 300);
       }, 3000);
     }
   }
