@@ -1,32 +1,64 @@
-document.addEventListener("DOMContentLoaded", () => {
+import { secureStorageService } from './services/secure-storage-service.js';
+import { validationService } from './services/validation-service.js';
+
+document.addEventListener("DOMContentLoaded", async () => {
   const apiKeyInput = document.getElementById("api-key-input");
   const saveKeyButton = document.getElementById("save-key-button");
+  const clearKeyButton = document.getElementById("clear-key-button");
   const statusMessage = document.getElementById("status-message");
 
   // Load saved API key on startup
-  chrome.storage.local.get(['apiKey'], (result) => {
-    if (result.apiKey) {
-      apiKeyInput.value = result.apiKey;
+  try {
+    const hasKey = await secureStorageService.hasStoredApiKey();
+    if (hasKey) {
+      apiKeyInput.placeholder = "API key is stored securely";
+      clearKeyButton.style.display = "inline-block";
       showStatus("API key loaded", "info");
+    } else {
+      clearKeyButton.style.display = "none";
     }
-  });
+  } catch (error) {
+    clearKeyButton.style.display = "none";
+    showStatus("Error loading API key", "error");
+  }
 
   // Save API key
-  saveKeyButton.addEventListener("click", () => {
-    const apiKey = apiKeyInput.value.trim();
+  saveKeyButton.addEventListener("click", async () => {
+    const apiKey = validationService.sanitizeApiKey(apiKeyInput.value);
+    
     if (!apiKey) {
       showStatus("Please enter an API key", "error");
       return;
     }
 
-    if (!apiKey.startsWith('sk-or-v1-')) {
-      showStatus("Invalid API key format. Should start with 'sk-or-v1-'", "error");
+    const validation = validationService.validateApiKeyFormat(apiKey);
+    if (!validation.valid) {
+      showStatus(validation.error, "error");
       return;
     }
 
-    chrome.storage.local.set({ apiKey }, () => {
-      showStatus("API key saved successfully!", "success");
-    });
+    try {
+      await secureStorageService.storeApiKey(apiKey);
+      apiKeyInput.value = "";
+      apiKeyInput.placeholder = "API key stored securely";
+      clearKeyButton.style.display = "inline-block";
+      showStatus("API key saved and encrypted successfully!", "success");
+    } catch (error) {
+      showStatus(`Failed to save API key: ${error.message}`, "error");
+    }
+  });
+
+  // Clear API key
+  clearKeyButton.addEventListener("click", async () => {
+    try {
+      await secureStorageService.clearApiKey();
+      apiKeyInput.value = "";
+      apiKeyInput.placeholder = "sk-or-v1-...";
+      clearKeyButton.style.display = "none";
+      showStatus("API key cleared successfully!", "success");
+    } catch (error) {
+      showStatus(`Failed to clear API key: ${error.message}`, "error");
+    }
   });
 
   function showStatus(message, type) {

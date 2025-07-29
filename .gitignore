@@ -68,3 +68,5 @@ promotional/
 # Backup files
 *.bak
 *.backup 
+docs/Future-Scope.md
+.github/copilot-instructions.md

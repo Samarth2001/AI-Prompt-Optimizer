@@ -252,12 +252,16 @@ function cleanup() {
 // API SERVICE MODULE - Prompt enhancement communication
 // ============================================================================
 
-function getStoredApiKey() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(['apiKey'], (result) => {
-      resolve(result.apiKey || null);
+async function getStoredApiKey() {
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: 'getApiKey'
     });
-  });
+    return result?.apiKey || null;
+  } catch (error) {
+    console.error('Error retrieving API key:', error);
+    return null;
+  }
 }
 
 async function enhancePrompt(prompt) {

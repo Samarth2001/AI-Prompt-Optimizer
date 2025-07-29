@@ -1,4 +1,19 @@
+import { secureStorageService } from './services/secure-storage-service.js';
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "getApiKey") {
+    (async () => {
+      try {
+        const apiKey = await secureStorageService.retrieveApiKey();
+        sendResponse({ apiKey });
+      } catch (error) {
+        console.error('Error retrieving API key:', error);
+        sendResponse({ apiKey: null });
+      }
+    })();
+    return true;
+  }
+  
   if (request.action === "enhancePrompt") {
     const { prompt, apiKey } = request;
     

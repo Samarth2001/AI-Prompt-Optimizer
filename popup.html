@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -84,6 +84,23 @@
     .help a:hover {
       text-decoration: underline;
     }
+    .key-actions {
+      margin-top: 8px;
+      text-align: center;
+    }
+    .secondary {
+      background: #6c757d;
+      font-size: 11px;
+      padding: 6px 12px;
+    }
+    .secondary:hover {
+      background: #5a6268;
+    }
+    .error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
   </style>
 </head>
 <body>
@@ -97,6 +114,9 @@
       <input type="password" id="api-key-input" placeholder="sk-or-v1-...">
       <button id="save-key-button">Save</button>
     </div>
+    <div class="key-actions">
+      <button id="clear-key-button" class="secondary" style="display: none;">Clear Stored Key</button>
+    </div>
     <div id="status-message"></div>
   </div>
   
@@ -109,6 +129,6 @@
     5. Click it to enhance your prompts!
   </div>
   
-  <script src="popup.js"></script>
+  <script type="module" src="popup.js"></script>
 </body>
-</html> 
+</> 

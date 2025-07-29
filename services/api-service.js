@@ -1,11 +1,13 @@
 // API service for prompt enhancement
+import { secureStorageService } from './secure-storage-service.js';
 
-export function getStoredApiKey() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(['apiKey'], (result) => {
-      resolve(result.apiKey || null);
-    });
-  });
+export async function getStoredApiKey() {
+  try {
+    return await secureStorageService.retrieveApiKey();
+  } catch (error) {
+    console.error('Error retrieving API key:', error);
+    return null;
+  }
 }
 
 export async function enhancePrompt(prompt) {
