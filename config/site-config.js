@@ -4,7 +4,7 @@ export const SITE_STYLES = {
     position: { top: '10px', right: '10px' },
     background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)', // Claude's warm orange theme
     hoverBackground: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-    borderRadius: '8px',
+    borderRadius: '10px',
     size: { width: '32px', height: '32px' },
     shadow: '0 2px 8px rgba(217, 119, 6, 0.3)',
     hoverShadow: '0 4px 16px rgba(245, 158, 11, 0.5)'
@@ -19,20 +19,20 @@ export const SITE_STYLES = {
     hoverShadow: '0 4px 20px rgba(90, 156, 255, 0.5)'
   },
   'chat.openai.com': {
-    position: { top: '12px', right: '12px' },
+    position: { top: '10px', right: '12px' },
     background: 'linear-gradient(135deg, #10a37f 0%, #0d8a6b 100%)', // OpenAI Green
     hoverBackground: 'linear-gradient(135deg, #1db584 0%, #10a37f 100%)',
     borderRadius: '6px',
-    size: { width: '34px', height: '34px' },
+    size: { width: '32px', height: '32px' },
     shadow: '0 3px 10px rgba(16, 163, 127, 0.3)',
     hoverShadow: '0 6px 20px rgba(29, 181, 132, 0.5)'
   },
   'chatgpt.com': {
-    position: { top: '12px', right: '12px' },
+    position: { top: '10px', right: '12px' },
     background: 'linear-gradient(135deg, #10a37f 0%, #0d8a6b 100%)', // OpenAI Green
     hoverBackground: 'linear-gradient(135deg, #1db584 0%, #10a37f 100%)',
     borderRadius: '6px',
-    size: { width: '34px', height: '34px' },
+    size: { width: '32px', height: '32px' },
     shadow: '0 3px 10px rgba(16, 163, 127, 0.3)',
     hoverShadow: '0 6px 20px rgba(29, 181, 132, 0.5)'
   },

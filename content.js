@@ -158,10 +158,11 @@ function addGlobalCSS() {
   style.id = "prompt-enhancer-css";
   style.textContent = `
     .enhance-button-wrapper { position: relative !important; display: block !important; }
-    .enhance-button { position: absolute !important; top: ${siteStyle.position.top} !important; right: ${siteStyle.position.right} !important; z-index: 9999 !important; background: ${siteStyle.background} !important; border: none !important; border-radius: ${siteStyle.borderRadius} !important; padding: 8px !important; width: ${siteStyle.size.width} !important; height: ${siteStyle.size.height} !important; cursor: pointer !important; transition: all 0.3s ease !important; display: flex !important; align-items: center !important; justify-content: center !important; box-shadow: ${siteStyle.shadow} !important; }
+    .enhance-button { position: absolute !important; top: ${siteStyle.position.top} !important; right: ${siteStyle.position.right} !important; z-index: 9999 !important; background: ${siteStyle.background} !important; border: none !important; border-radius: ${siteStyle.borderRadius} !important; width: ${siteStyle.size.width} !important; height: ${siteStyle.size.height} !important; box-sizing: border-box !important; padding: 0 !important; cursor: pointer !important; transition: all 0.3s ease !important; display: flex !important; align-items: center !important; justify-content: center !important; box-shadow: ${siteStyle.shadow} !important; aspect-ratio: 1 / 1 !important; }
     .enhance-button:hover { background: ${siteStyle.hoverBackground} !important; transform: translateY(-2px) scale(1.05) !important; box-shadow: ${siteStyle.hoverShadow} !important; }
-    .enhance-button:active { transform: translateY(0px) scale(1) !important; box-shadow: ${siteStyle.shadow} !important; }
-    .enhance-button svg { width: 18px !important; height: 18px !important; fill: white !important; transition: all 0.3s ease !important; }
+    .enhance-button:active { transform: translateY(0) scale(1) !important; box-shadow: ${siteStyle.shadow} !important; }
+    .enhance-button > * { pointer-events: none !important; }
+    .enhance-button svg { width: 66% !important; height: 66% !important; fill: white !important; transition: all 0.3s ease !important; }
     .prompt-enhancer-toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); padding: 12px 20px; border-radius: 8px; background: #262626; color: #fafafa; font-size: 14px; z-index: 10000; opacity: 0; transition: all 0.4s ease; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
     .prompt-enhancer-toast.show { opacity: 1; transform: translate(-50%, 10px); }
     .prompt-enhancer-toast.error { background: #ef4444; }
@@ -171,7 +172,7 @@ function addGlobalCSS() {
 
 function cleanup() {
   const selectors = window.__PE_config.getSiteSelectors();
-  if (window.__PE_utils && typeof window.__PE_utils.cleanup === 'function') {
+  if (window.__PE_utils && typeof window.__PE_utils.cleanup === "function") {
     window.__PE_utils.cleanup(selectors);
   }
 }
@@ -221,9 +222,7 @@ async function initialize() {
   const { getSiteStyle, getSiteSelectors } = await import(
     chrome.runtime.getURL("config/site-config.js")
   );
-  const utils = await import(
-    chrome.runtime.getURL("utils/dom-utils.js")
-  );
+  const utils = await import(chrome.runtime.getURL("utils/dom-utils.js"));
   // Attach to window to keep current function calls minimal
   window.__PE_config = { getSiteStyle, getSiteSelectors };
   window.__PE_utils = utils;
