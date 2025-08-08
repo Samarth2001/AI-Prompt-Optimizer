@@ -7,8 +7,12 @@
     "storage",
     "activeTab"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  },
   "background": {
-    "service_worker": "service-worker.js"
+    "service_worker": "service-worker.js",
+    "type": "module"
   },
   "content_scripts": [
     {
@@ -20,7 +24,9 @@
         "*://chatgpt.com/*",
         "*://*.chatgpt.com/*",
         "*://gemini.google.com/*",
-        "*://*.gemini.google.com/*"
+        "*://*.gemini.google.com/*",
+        "*://grok.com/*",
+        "*://*.grok.com/*"
       ],
       "js": [
         "content.js"
@@ -38,7 +44,9 @@
         "*://chatgpt.com/*",
         "*://*.chatgpt.com/*",
         "*://gemini.google.com/*",
-        "*://*.gemini.google.com/*"
+        "*://*.gemini.google.com/*",
+        "*://grok.com/*",
+        "*://*.grok.com/*"
       ]
     }
   ],

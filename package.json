@@ -2,6 +2,9 @@
   "name": "prompt-enhancer",
   "version": "1.0.0",
   "description": "A Chrome extension to enhance prompts on AI chat platforms.",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
   "keywords": [
     "chrome-extension",
     "prompt-engineering"
