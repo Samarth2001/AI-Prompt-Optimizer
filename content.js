@@ -170,10 +170,58 @@ function addGlobalCSS() {
   document.head.appendChild(style);
 }
 
+function getFocusedTextInput() {
+  let element = document.activeElement;
+  if (!element) return null;
+  while (element && element !== document.body) {
+    if (element.tagName === 'TEXTAREA') return element;
+    if (element.tagName === 'INPUT' && (element.type === 'text' || element.type === 'search')) return element;
+    if (element.isContentEditable) return element;
+    element = element.parentElement;
+  }
+  return null;
+}
+
+function findEnhanceButtonForInput(textInput) {
+  const buttons = document.querySelectorAll('.enhance-button');
+  for (const btn of buttons) {
+    if (btn.textInput === textInput) return btn;
+  }
+  return null;
+}
+
+function attachKeyboardShortcut() {
+  if (window.__PE_keydownHandlerAttached) return;
+  const handler = (e) => {
+    const isModifier = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+    if (!isModifier || e.repeat) return;
+    const key = (e.key || '').toLowerCase();
+    if (key !== 'e') return;
+    const focused = getFocusedTextInput();
+    if (!focused) return;
+    if (focused.dataset.enhanced !== 'true') {
+      try { addEnhanceButton(focused); } catch {}
+    }
+    const button = findEnhanceButtonForInput(focused);
+    if (!button) return;
+    e.preventDefault();
+    e.stopPropagation();
+    button.click();
+  };
+  window.addEventListener('keydown', handler, true);
+  window.__PE_keydownHandlerAttached = true;
+  window.__PE_keydownHandler = handler;
+}
+
 function cleanup() {
   const selectors = window.__PE_config.getSiteSelectors();
   if (window.__PE_utils && typeof window.__PE_utils.cleanup === "function") {
     window.__PE_utils.cleanup(selectors);
+  }
+  if (window.__PE_keydownHandlerAttached && window.__PE_keydownHandler) {
+    window.removeEventListener('keydown', window.__PE_keydownHandler, true);
+    delete window.__PE_keydownHandlerAttached;
+    delete window.__PE_keydownHandler;
   }
 }
 
@@ -241,6 +289,7 @@ async function initialize() {
     window.location.hostname
   );
   addGlobalCSS();
+  attachKeyboardShortcut();
 
   // Initial run with a small delay to ensure page is loaded
   setTimeout(() => {

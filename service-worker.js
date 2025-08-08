@@ -1,7 +1,7 @@
 import { secureStorageService } from "./services/secure-storage-service.js";
 import { validationService } from "./services/validation-service.js";
 
-const ALLOWED_ACTIONS = new Set(["getUsage", "enhancePrompt"]);
+const ALLOWED_ACTIONS = new Set(["getUsage", "enhancePrompt", "unlockPassphrase", "lockPassphrase"]);
 const MIN_ENHANCE_INTERVAL_MS = 3000; // 1 req / 3s
 let lastEnhanceAt = 0;
 const MAX_PROMPT_CHARS = 4000;
@@ -100,6 +100,32 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse(usage || { count: 0 });
     })();
     return true;
+  }
+
+  if (request.action === "unlockPassphrase") {
+    (async () => {
+      try {
+        const pass = (request && request.passphrase) || "";
+        if (!pass || typeof pass !== "string") {
+          throw new Error("Passphrase required");
+        }
+        await secureStorageService.unlockWithPassphrase(pass);
+        sendResponse({ success: true });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    return true;
+  }
+
+  if (request.action === "lockPassphrase") {
+    try {
+      secureStorageService.disablePassphraseMode();
+      sendResponse({ success: true });
+    } catch (error) {
+      sendResponse({ success: false, error: error.message });
+    }
+    return false;
   }
 
   if (request.action === "enhancePrompt") {
