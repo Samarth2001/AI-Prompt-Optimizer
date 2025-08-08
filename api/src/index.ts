@@ -100,12 +100,12 @@ const apiRequestSchema = z.object({
         .array(
             z.object({
                 role: z.string(),
-                content: z.string(),
+                content: z.string().min(1).max(MAX_PROMPT_CHARS),
             })
         )
         .min(1),
-    max_tokens: z.number().optional().default(500),
-    temperature: z.number().optional().default(0.7),
+    max_tokens: z.number().int().positive().max(4096).optional().default(500),
+    temperature: z.number().min(0).max(2).optional().default(0.7),
 });
 
 app.use('/api/enhance', async (c, next) => {
@@ -183,6 +183,12 @@ app.use('/api/enhance', async (c, next) => {
 
 app.options('/api/enhance', (c) => {
     const origin = c.get('corsOrigin');
+    return new Response(null, { status: 204, headers: buildBaseHeaders(origin) });
+});
+
+// Generic CORS preflight for future endpoints
+app.options('*', (c) => {
+    const origin = resolveAllowedOrigin(c.req.header('Origin'), c.env) || '*';
     return new Response(null, { status: 204, headers: buildBaseHeaders(origin) });
 });
 

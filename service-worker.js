@@ -1,6 +1,13 @@
 import { secureStorageService } from "./services/secure-storage-service.js";
 import { validationService } from "./services/validation-service.js";
 
+const ALLOWED_ACTIONS = new Set(["getUsage", "enhancePrompt"]);
+const MIN_ENHANCE_INTERVAL_MS = 3000; // 1 req / 3s
+let lastEnhanceAt = 0;
+const MAX_PROMPT_CHARS = 4000;
+const DEFAULT_MODEL = "google/gemini-2.0-flash-exp:free";
+const APP_X_TITLE = "Enhance Prompt";
+
 const ALLOWED_HOSTS = [
   "claude.ai",
   "chat.openai.com",
@@ -13,8 +20,10 @@ function isTrustedSender(sender) {
   try {
     if (!sender) return false;
     if (sender.id && sender.id !== chrome.runtime.id) return false;
+    if (sender.id === chrome.runtime.id) return true;
     const urlString = sender.url || "";
     if (urlString.startsWith("chrome-extension://")) return true;
+    if (!urlString) return false;
     const url = new URL(urlString);
     const host = url.hostname || "";
     return ALLOWED_HOSTS.some(
@@ -76,6 +85,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ success: false, error: "Unauthorized sender" });
     return false;
   }
+
+  if (!request || typeof request.action !== "string" || !ALLOWED_ACTIONS.has(request.action)) {
+    sendResponse({ success: false, error: "Action not allowed" });
+    return false;
+  }
+
   if (request.action === "getUsage") {
     (async () => {
       const userToken = await getOrCreateUserToken();
@@ -89,6 +104,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "enhancePrompt") {
     (async () => {
+      const now = Date.now();
+      const elapsed = now - lastEnhanceAt;
+      if (elapsed < MIN_ENHANCE_INTERVAL_MS) {
+        const waitMs = MIN_ENHANCE_INTERVAL_MS - elapsed;
+        const waitSec = Math.ceil(waitMs / 1000);
+        sendResponse({ success: false, error: `Too many requests. Please wait ${waitSec}s and try again.` });
+        return;
+      }
+      lastEnhanceAt = now;
+
       const { mode } = await chrome.storage.local.get("mode");
       if (mode === "byok") {
         await handleByokRequest(request, sendResponse);
@@ -103,7 +128,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 async function handleProxyRequest({ prompt }, sendResponse) {
   try {
     const userToken = await getOrCreateUserToken();
-    const sanitizedPrompt = validationService.sanitizePrompt(prompt.trim(), 4000);
+    const basePrompt = validationService.sanitizeInput((prompt || "").trim());
+    if (!basePrompt) {
+      throw new Error("Prompt is empty.");
+    }
+    if (basePrompt.length > MAX_PROMPT_CHARS) {
+      throw new Error(`Prompt exceeds ${MAX_PROMPT_CHARS} characters.`);
+    }
+    const sanitizedPrompt = basePrompt;
     const apiUrl =
       "https://enhance-prompt-api.prompt-enhance-api.workers.dev/api/enhance";
 
@@ -176,7 +208,14 @@ async function handleByokRequest({ prompt }, sendResponse) {
       throw new Error("API key not set for BYOK mode.");
     }
 
-    const sanitizedPrompt = validationService.sanitizePrompt(prompt.trim(), 4000);
+    const basePrompt = validationService.sanitizeInput((prompt || "").trim());
+    if (!basePrompt) {
+      throw new Error("Prompt is empty.");
+    }
+    if (basePrompt.length > MAX_PROMPT_CHARS) {
+      throw new Error(`Prompt exceeds ${MAX_PROMPT_CHARS} characters.`);
+    }
+    const sanitizedPrompt = basePrompt;
     const response = await fetchWithRetry(
       "https://openrouter.ai/api/v1/chat/completions",
       {
@@ -185,10 +224,10 @@ async function handleByokRequest({ prompt }, sendResponse) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
           "HTTP-Referer": APP_HTTP_REFERER,
-          "X-Title": "Enhance Prompt",
+          "X-Title": APP_X_TITLE,
         },
         body: JSON.stringify({
-          model: "google/gemini-2.0-flash-exp:free",
+          model: DEFAULT_MODEL,
           messages: [
             {
               role: "system",

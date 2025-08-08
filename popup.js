@@ -10,6 +10,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   const apiSection = document.getElementById("api-section");
   const usageText = document.getElementById("usage-text");
   const usageProgress = document.getElementById("usage-progress");
+  const modeLabel = document.getElementById("mode-label");
+  const passphraseToggle = document.getElementById("passphrase-toggle");
+  const passphraseRow = document.getElementById("passphrase-row");
+  const passphraseInput = document.getElementById("passphrase-input");
+  const setPassphraseButton = document.getElementById("set-passphrase-button");
 
   async function initialize() {
     const { mode } = await chrome.storage.local.get({ mode: 'proxy' });
@@ -18,6 +23,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     modeToggle.checked = mode === 'byok';
     document.body.dataset.mode = mode;
     updateUIMode(mode, !!apiKey);
+    updateModeLabel(mode);
 
     if (mode === 'proxy') {
       updateUsage();
@@ -28,6 +34,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.body.dataset.mode = mode;
     apiSection.classList.toggle('hidden', mode !== 'byok');
     clearKeyButton.classList.toggle('hidden', !hasApiKey);
+  }
+
+  function updateModeLabel(mode) {
+    modeLabel.textContent = mode === 'byok' ? 'BYOK' : 'Proxy';
   }
 
   async function updateUsage() {
@@ -46,6 +56,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     await chrome.storage.local.set({ mode: newMode });
     const apiKey = await secureStorageService.retrieve("byokApiKey");
     updateUIMode(newMode, !!apiKey);
+    updateModeLabel(newMode);
 
     if (newMode === 'proxy') {
         await updateUsage();
@@ -68,6 +79,31 @@ document.addEventListener("DOMContentLoaded", async () => {
       showStatus("API key saved and encrypted successfully!", "success");
     } catch (error) {
       showStatus(`Failed to save API key: ${error.message}`, "error");
+    }
+  });
+
+  passphraseToggle.addEventListener('change', async () => {
+    const enabled = passphraseToggle.checked;
+    passphraseRow.classList.toggle('hidden', !enabled);
+    if (!enabled) {
+      secureStorageService.disablePassphraseMode();
+      passphraseInput.value = '';
+      showStatus('Passphrase mode disabled', 'info');
+    }
+  });
+
+  setPassphraseButton.addEventListener('click', async () => {
+    const pass = validationService.sanitizeInput(passphraseInput.value);
+    if (!pass) {
+      showStatus('Please enter a passphrase', 'error');
+      return;
+    }
+    try {
+      await secureStorageService.enablePassphraseMode(pass);
+      passphraseInput.value = '';
+      showStatus('Passphrase set. Your key will be locked with it.', 'success');
+    } catch (e) {
+      showStatus(`Failed to enable passphrase: ${e.message}`, 'error');
     }
   });
 
