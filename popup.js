@@ -2,146 +2,100 @@ import { secureStorageService } from './services/secure-storage-service.js';
 import { validationService } from './services/validation-service.js';
 
 document.addEventListener("DOMContentLoaded", async () => {
+  const modeToggle = document.getElementById("mode-toggle");
   const apiKeyInput = document.getElementById("api-key-input");
   const saveKeyButton = document.getElementById("save-key-button");
   const clearKeyButton = document.getElementById("clear-key-button");
-  const toggleInputButton = document.getElementById("toggle-input-button");
   const statusMessage = document.getElementById("status-message");
-  const inputContainer = document.getElementById("input-container");
-  const apiStatus = document.getElementById("api-status");
-  const statusDot = document.getElementById("status-dot");
-  const statusText = document.getElementById("status-text");
+  const apiSection = document.getElementById("api-section");
+  const usageText = document.getElementById("usage-text");
+  const usageProgress = document.getElementById("usage-progress");
 
-  // Load saved API key on startup
-  try {
-    const hasKey = await secureStorageService.hasStoredApiKey();
-    if (hasKey) {
-      setApiKeyState(true);
-      showStatus("API key loaded securely", "info");
-    } else {
-      setApiKeyState(false);
+  async function initialize() {
+    const { mode } = await chrome.storage.local.get({ mode: 'proxy' });
+    const apiKey = await secureStorageService.retrieve("byokApiKey");
+
+    modeToggle.checked = mode === 'byok';
+    document.body.dataset.mode = mode;
+    updateUIMode(mode, !!apiKey);
+
+    if (mode === 'proxy') {
+      updateUsage();
     }
-  } catch (error) {
-    setApiKeyState(false);
-    showStatus("Error loading API key", "error");
   }
 
-  // Save API key
+  function updateUIMode(mode, hasApiKey) {
+    document.body.dataset.mode = mode;
+    apiSection.classList.toggle('hidden', mode !== 'byok');
+    clearKeyButton.classList.toggle('hidden', !hasApiKey);
+  }
+
+  async function updateUsage() {
+    const usage = await chrome.runtime.sendMessage({ action: 'getUsage' });
+    if (usage && typeof usage.count === 'number') {
+        const DAILY_LIMIT = 100;
+        const remaining = Math.max(0, DAILY_LIMIT - usage.count);
+        usageText.textContent = `${remaining} / ${DAILY_LIMIT} remaining`;
+        usageProgress.style.width = `${(remaining / DAILY_LIMIT) * 100}%`;
+    }
+  }
+
+  modeToggle.addEventListener('change', async () => {
+    modeToggle.disabled = true;
+    const newMode = modeToggle.checked ? 'byok' : 'proxy';
+    await chrome.storage.local.set({ mode: newMode });
+    const apiKey = await secureStorageService.retrieve("byokApiKey");
+    updateUIMode(newMode, !!apiKey);
+
+    if (newMode === 'proxy') {
+        await updateUsage();
+    }
+    modeToggle.disabled = false;
+  });
+
   saveKeyButton.addEventListener("click", async () => {
-    const apiKey = validationService.sanitizeApiKey(apiKeyInput.value);
+    const apiKey = validationService.sanitizeInput(apiKeyInput.value);
     
     if (!apiKey) {
       showStatus("Please enter an API key", "error");
       return;
     }
 
-    const validation = validationService.validateApiKeyFormat(apiKey);
-    if (!validation.valid) {
-      showStatus(validation.error, "error");
-      return;
-    }
-
     try {
-      await secureStorageService.storeApiKey(apiKey);
+      await secureStorageService.save("byokApiKey", apiKey);
       apiKeyInput.value = "";
-      setApiKeyState(true);
+      updateUIMode('byok', true);
       showStatus("API key saved and encrypted successfully!", "success");
     } catch (error) {
       showStatus(`Failed to save API key: ${error.message}`, "error");
     }
   });
 
-  // Clear API key
   clearKeyButton.addEventListener("click", async () => {
     try {
-      await secureStorageService.clearApiKey();
+      await secureStorageService.remove("byokApiKey");
       apiKeyInput.value = "";
-      setApiKeyState(false);
+      updateUIMode('byok', false);
       showStatus("API key cleared successfully!", "success");
     } catch (error) {
       showStatus(`Failed to clear API key: ${error.message}`, "error");
     }
   });
 
-  // Toggle input visibility
-  toggleInputButton.addEventListener("click", () => {
-    showInputField();
-  });
-
-  // Handle Enter key in input
   apiKeyInput.addEventListener("keypress", (e) => {
     if (e.key === "Enter") {
       saveKeyButton.click();
     }
   });
 
-  function setApiKeyState(hasKey) {
-    if (hasKey) {
-      // API key is stored
-      hideInputField();
-      updateApiStatus("Configured", false);
-      toggleInputButton.classList.remove("hidden");
-      clearKeyButton.classList.remove("hidden");
-      apiKeyInput.placeholder = "••••••••••••••••••••••••••••••••";
-      apiKeyInput.classList.add("masked");
-    } else {
-      // No API key
-      showInputField();
-      updateApiStatus("No key", true);
-      toggleInputButton.classList.add("hidden");
-      clearKeyButton.classList.add("hidden");
-      apiKeyInput.placeholder = "Enter your OpenRouter API key";
-      apiKeyInput.classList.remove("masked");
-    }
-  }
-
-  function updateApiStatus(text, isEmpty) {
-    statusText.textContent = text;
-    
-    if (isEmpty) {
-      statusDot.classList.add("empty");
-      statusText.classList.add("empty");
-    } else {
-      statusDot.classList.remove("empty");
-      statusText.classList.remove("empty");
-    }
-    
-    // Show status with animation
-    apiStatus.classList.add("show");
-  }
-
-  function hideInputField() {
-    inputContainer.classList.remove("expanded");
-    inputContainer.classList.add("collapsed");
-  }
-
-  function showInputField() {
-    inputContainer.classList.remove("collapsed");
-    inputContainer.classList.add("expanded");
-    
-    // Focus input after animation
-    setTimeout(() => {
-      apiKeyInput.focus();
-    }, 200);
-  }
-
   function showStatus(message, type) {
     statusMessage.textContent = message;
-    statusMessage.className = `status ${type}`;
-    
-    // Add show class for animation
+    statusMessage.className = `status ${type} show`;
     setTimeout(() => {
-      statusMessage.classList.add("show");
-    }, 50);
-    
-    if (type === "success" || type === "info") {
-      setTimeout(() => {
-        statusMessage.classList.remove("show");
-        setTimeout(() => {
-          statusMessage.textContent = "";
-          statusMessage.className = "status";
-        }, 300);
-      }, 3000);
-    }
+      statusMessage.classList.remove("show");
+    }, 3000);
   }
-}); 
+
+  initialize();
+});
+ 

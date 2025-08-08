@@ -1,0 +1,14 @@
+name = "enhance-prompt-api"
+main = "src/index.ts"
+compatibility_date = "2024-07-06"
+
+ kv_namespaces = [
+  { binding = "REQUEST_COUNT", id = "841b23c76c1749ebac24aad0e661fab4", preview_id = "841b23c76c1749ebac24aad0e661fab4" }
+]
+
+
+[vars]
+APP_HTTP_REFERER = "https://enhance-prompt-api.prompt-enhance-api.workers.dev"
+# ALLOWED_ORIGINS = "chrome-extension://<your-extension-id>,https://your-site.example"
+ALLOWED_ORIGINS = "chrome-extension://*,*,null"
+

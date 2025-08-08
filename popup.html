@@ -360,6 +360,111 @@
           opacity: 0.5;
         }
       }
+    .main-controls {
+        margin-bottom: 20px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid #1a1a1a;
+      }
+
+      .usage-section {
+        margin-bottom: 20px;
+      }
+
+      .usage-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: #d4d4d8;
+        margin-bottom: 8px;
+        display: block;
+      }
+
+      .usage-bar {
+        width: 100%;
+        height: 8px;
+        background: #1a1a1a;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 6px;
+      }
+
+      .usage-progress {
+        width: 100%;
+        height: 100%;
+        background: #22c55e;
+        border-radius: 4px;
+        transition: width 0.3s ease;
+      }
+
+      .usage-text {
+        font-size: 11px;
+        color: #737373;
+      }
+
+      .toggle-section {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .toggle-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: #d4d4d8;
+      }
+
+      .switch {
+        position: relative;
+        display: inline-block;
+        width: 34px;
+        height: 20px;
+      }
+
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #262626;
+        transition: .4s;
+        border-radius: 20px;
+      }
+
+      .slider:before {
+        position: absolute;
+        content: "";
+        height: 14px;
+        width: 14px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: .4s;
+        border-radius: 50%;
+      }
+
+      input:checked + .slider {
+        background-color: #22c55e;
+      }
+
+      input:checked + .slider:before {
+        transform: translateX(14px);
+      }
+
+      body[data-mode="byok"] .usage-section {
+        display: none;
+      }
+
+      .switch input:disabled + .slider {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
     </style>
   </head>
   <body>
@@ -368,44 +473,50 @@
       <p>AI-powered prompt optimization</p>
     </div>
 
-    <div class="api-section">
-      <div class="api-header">
-        <span class="api-label">API Configuration</span>
-        <div class="api-status" id="api-status">
-          <div class="status-dot empty" id="status-dot"></div>
-          <span class="api-status-text empty" id="status-text">No key</span>
+    <div class="main-controls">
+      <div class="usage-section">
+        <span class="usage-label">Daily Usage</span>
+        <div class="usage-bar">
+          <div class="usage-progress" id="usage-progress"></div>
         </div>
+        <span class="usage-text" id="usage-text">100 / 100 remaining</span>
       </div>
 
-      <div class="input-container expanded" id="input-container">
-        <div class="input-group">
-          <input
-            type="password"
-            id="api-key-input"
-            class="input"
-            placeholder="Enter your OpenRouter API key"
-          />
-          <button id="save-key-button" class="btn btn-primary">Save</button>
-        </div>
+      <div class="toggle-section">
+        <span class="toggle-label">Use your own API key</span>
+        <label class="switch">
+          <input type="checkbox" id="mode-toggle" aria-label="Toggle API key mode">
+          <span class="slider"></span>
+        </label>
       </div>
+    </div>
 
+    <div class="api-section hidden" id="api-section">
+      <div class="input-group">
+        <input
+          type="password"
+          id="api-key-input"
+          class="input"
+          placeholder="Enter your OpenRouter API key"
+        />
+        <button id="save-key-button" class="btn btn-primary">Save</button>
+      </div>
       <div class="api-actions">
-        <button id="toggle-input-button" class="btn btn-ghost hidden">
-          Add API Key
-        </button>
         <button id="clear-key-button" class="btn btn-secondary hidden">
           Clear Key
         </button>
       </div>
-
       <div id="status-message" class="status"></div>
     </div>
 
     <div class="help-section">
-      <h3 class="help-title">Quick Start</h3>
+      <h3 class="help-title">How it Works</h3>
       <ol class="help-steps">
         <li class="help-step">
-          Get API key from
+          By default, enjoy 100 free enhancements per day.
+        </li>
+        <li class="help-step">
+          For unlimited use, toggle on "Use your own API key" and add your
           <a
             href="https://openrouter.ai/"
             target="_blank"
@@ -413,11 +524,11 @@
             class="help-link"
             >OpenRouter</a
           >
+          key.
         </li>
-        <li class="help-step">Save it securely above</li>
-        <li class="help-step">Visit any website with text areas</li>
-        <li class="help-step">Click the enhance button that appears</li>
-        <li class="help-step">Watch your prompts get optimized</li>
+        <li class="help-step">
+          Find the ✨ button on supported sites to enhance your prompts.
+        </li>
       </ol>
     </div>
 

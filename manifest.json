@@ -5,7 +5,13 @@
   "description": "Enhances prompts on various websites.",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "alarms",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://*.workers.dev/",
+    "https://enhance-prompt-api.prompt-enhance-api.workers.dev/"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"
@@ -35,7 +41,11 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/*.png"],
+      "resources": [
+        "icons/*.png",
+        "config/site-config.js",
+        "utils/dom-utils.js"
+      ],
       "matches": [
         "*://claude.ai/*",
         "*://*.claude.ai/*",
