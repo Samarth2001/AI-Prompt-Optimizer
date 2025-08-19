@@ -1,27 +1,28 @@
 # Prompt Enhancer
 
-A Chrome extension that adds "✨ Enhance" buttons to text fields on web pages, allowing you to enhance prompts using the OpenRouter API.
+A Chrome extension that enhances your prompts on major AI chat platforms.
 
 ## How It Works
 
-The extension automatically detects text areas and input fields on web pages and adds a floating "✨ Enhance" button to each one. Click the button to enhance whatever text you've typed.
+The extension adds an "✨ Enhance" button to text fields on supported sites. Click it to refine your prompt for better clarity and performance.
+
+**Default Mode (Free)**: Your prompts are enhanced through our secure proxy service, offering up to 100 free enhancements per day. No API key is required.
+
+**BYOK Mode (Bring Your Own Key)**: For advanced users, you can use your own OpenRouter API key for unlimited enhancements.
+
+## Features
+
+- **One-click prompt enhancement**
+- **Seamless integration** with popular AI chat sites
+- **Secure and private**: We do not collect or store any of your data.
+- **Two modes**: A generous free tier and an optional BYOK mode.
 
 ## Setup
 
-1. **Get an API Key**: Sign up at [OpenRouter.ai](https://openrouter.ai/) for a free API key
-2. **Install Extension**: Load the extension in Chrome developer mode
-3. **Set API Key**: Click the extension icon and save your API key
+1. **Install Extension**: Load the extension in Chrome.
+2. **Start Enhancing**: The extension is ready to use in the default free mode.
+3. **(Optional) BYOK Mode**: To use your own key, click the extension icon, switch to BYOK mode, and enter your OpenRouter API key.
 
-## Usage
+## Disclaimer
 
-1. **Go to any website** with text inputs (Gmail, ChatGPT, Claude, etc.)
-2. **Type your prompt** in any text field
-3. **Click the "✨ Enhance" button** that appears in the text field
-4. **Your prompt gets enhanced** and replaced automatically
-
-## Examples
-
-- Original: "Write an email"
-- Enhanced: "Write a professional email with a clear subject line, polite greeting, concise body paragraphs, and appropriate closing"
-
-Perfect for improving prompts on AI chat platforms, email composition, social media posts, and more! 
+This is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI, Anthropic, Google, or any other AI service provider. 

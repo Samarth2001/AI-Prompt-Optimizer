@@ -1,17 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Prompt Enhancer",
+  "short_name": "Enhancer",
   "version": "1.0",
   "description": "Enhances prompts on various websites.",
+  "minimum_chrome_version": "102",
   "permissions": [
-    "storage",
-    "activeTab",
-    "alarms",
-    "clipboardWrite"
-  ],
-  "host_permissions": [
-    "https://*.workers.dev/",
-    "https://enhance-prompt-api.prompt-enhance-api.workers.dev/"
+    "storage"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"
@@ -42,7 +37,6 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "icons/*.png",
         "config/site-config.js",
         "utils/dom-utils.js"
       ],

@@ -108,7 +108,6 @@ function addEnhanceButton(textInput) {
 
   try {
     textInput.dataset.enhanced = "true";
-    console.log("Adding enhance button to:", textInput);
 
     // Find the nearest positioned ancestor or create a wrapper
     let wrapper = window.__PE_utils.findPositionedParent(textInput);
@@ -117,12 +116,10 @@ function addEnhanceButton(textInput) {
     if (!wrapper) {
       wrapper = window.__PE_utils.createWrapper(textInput);
     } else {
-      console.log("Using existing positioned parent:", wrapper);
     }
 
     const button = createEnhanceButton(textInput);
     wrapper.appendChild(button);
-    console.log("Button added successfully");
 
     // Store cleanup function
     textInput._enhanceCleanup = () => {
@@ -144,9 +141,6 @@ function addEnhanceButton(textInput) {
 function processPage() {
   const textInputs = window.__PE_utils.findTextInputs(
     window.__PE_config.getSiteSelectors()
-  );
-  console.log(
-    `Found ${textInputs.length} text inputs on ${window.location.hostname}`
   );
   textInputs.forEach(addEnhanceButton);
 }
@@ -265,7 +259,6 @@ const observer = new MutationObserver((mutations) => {
 });
 
 async function initialize() {
-  console.log("Prompt Enhancer: Checking site -", window.location.hostname);
   // Load shared config and utils to eliminate drift
   const { getSiteStyle, getSiteSelectors } = await import(
     chrome.runtime.getURL("config/site-config.js")
@@ -278,16 +271,9 @@ async function initialize() {
   // Only initialize on supported AI chat sites
   const selectors = window.__PE_config.getSiteSelectors();
   if (!selectors) {
-    console.log(
-      "Prompt Enhancer: Site not supported, extension will not activate"
-    );
     return;
   }
 
-  console.log(
-    "Prompt Enhancer: Initializing on supported AI site -",
-    window.location.hostname
-  );
   addGlobalCSS();
   attachKeyboardShortcut();
 
@@ -300,8 +286,6 @@ async function initialize() {
     childList: true,
     subtree: true,
   });
-
-  console.log("Prompt Enhancer: Initialization complete");
 }
 
 // Start the process
