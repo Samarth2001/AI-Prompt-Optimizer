@@ -10,5 +10,8 @@
     "prompt-engineering"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "hono": "^4.9.4"
+  }
 }

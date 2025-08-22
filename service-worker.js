@@ -1,7 +1,15 @@
 import { secureStorageService } from "./services/secure-storage-service.js";
 import { validationService } from "./services/validation-service.js";
 
-const ALLOWED_ACTIONS = new Set(["getUsage", "enhancePrompt", "unlockPassphrase", "lockPassphrase"]);
+const ALLOWED_ACTIONS = new Set([
+  "getUsage",
+  "enhancePrompt",
+  "unlockPassphrase",
+  "lockPassphrase",
+  "ensureValidJwt",
+  "_debugSetRateLimit",  
+  "updateRemoteConfig",
+]);
 const MIN_ENHANCE_INTERVAL_MS = 3000; // 1 req / 3s
 let lastEnhanceAt = 0;
 const MAX_PROMPT_CHARS = 4000;
@@ -36,7 +44,7 @@ function isTrustedSender(sender) {
 
 const APP_HTTP_REFERER =
   (chrome.runtime.getManifest && chrome.runtime.getManifest().homepage_url) ||
-  "https://enhance-prompt-api.prompt-enhance-api.workers.dev";
+  "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev";
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,14 +54,23 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
     return response;
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-async function fetchWithRetry(url, options = {}, attempts = 3, timeoutMs = 15000, backoffBaseMs = 300) {
+async function fetchWithRetry(
+  url,
+  options = {},
+  attempts = 3,
+  timeoutMs = 15000,
+  backoffBaseMs = 300
+) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -71,12 +88,83 @@ async function fetchWithRetry(url, options = {}, attempts = 3, timeoutMs = 15000
   throw lastError || new Error("Request failed");
 }
 
-async function getOrCreateUserToken() {
-  let token = await secureStorageService.retrieve("userToken");
-  if (!token) {
-    token = crypto.randomUUID();
-    await secureStorageService.save("userToken", token);
+async function ensureValidJwt() {
+  let token = await secureStorageService.retrieve("jwt");
+  if (token) {
+    const payload = decodeJwt(token);
+    if (payload && payload.exp * 1000 > Date.now() + 60 * 1000) {
+      return token;
+    }
   }
+
+  const redirectUrl = await chrome.identity.getRedirectURL();
+
+  const authUrl = `https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/turnstile?redirect_uri=${encodeURIComponent(
+    redirectUrl
+  )}`;
+  const resultUrl = await new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow(
+      { url: authUrl, interactive: true },
+      (responseUrl) => {
+        if (chrome.runtime.lastError || !responseUrl) {
+          reject(chrome.runtime.lastError || new Error("Verification failed"));
+          return;
+        }
+        resolve(responseUrl);
+      }
+    );
+  });
+
+  const tokenMatch = String(resultUrl).match(/[#&]token=([^&]+)/);
+  const turnstileToken = tokenMatch ? decodeURIComponent(tokenMatch[1]) : "";
+  if (!turnstileToken)
+    throw new Error("Turnstile verification failed: no token");
+
+  const apiUrl =
+    "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/api/token";
+  const response = await fetch(apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ turnstileToken }),
+  });
+  if (!response.ok)
+    throw new Error("Failed to exchange Turnstile token for JWT");
+
+  const data = await response.json();
+  await secureStorageService.save("jwt", data.token);
+  return data.token;
+}
+
+function decodeJwt(token) {
+  try {
+    const [, payload] = token.split(".");
+    const decoded = atob(payload);
+    return JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+}
+
+async function getOrCreateJwt() {
+  let token = await secureStorageService.retrieve("jwt");
+  const payload = token ? decodeJwt(token) : null;
+
+  if (!payload || payload.exp * 1000 < Date.now() + 60 * 1000) {
+    try {
+      token = await ensureValidJwt();
+    } catch (error) {
+      throw new Error(
+        `Security check failed: ${error.message}. Please try opening the popup again.`
+      );
+    }
+  }
+
+  if (!token) {
+    throw new Error(
+      "Could not get security token. Please open the popup to try again."
+    );
+  }
+
   return token;
 }
 
@@ -86,18 +174,81 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return false;
   }
 
-  if (!request || typeof request.action !== "string" || !ALLOWED_ACTIONS.has(request.action)) {
+  if (
+    !request ||
+    typeof request.action !== "string" ||
+    !ALLOWED_ACTIONS.has(request.action)
+  ) {
     sendResponse({ success: false, error: "Action not allowed" });
     return false;
   }
 
+  if (request.action === "ensureValidJwt") {
+    (async () => {
+      try {
+        await ensureValidJwt();
+        sendResponse({ success: true });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    return true;
+  }
+
   if (request.action === "getUsage") {
     (async () => {
-      const userToken = await getOrCreateUserToken();
-      const ip = "not-collected"; // IP is handled server-side
-      const rateLimitKey = `rate_limit:${userToken}:${ip}`;
+      const rateLimitKey = `rate_limit_status`;
       const usage = await secureStorageService.retrieve(rateLimitKey);
-      sendResponse(usage || { count: 0 });
+
+      if (
+        usage &&
+        typeof usage.limit === "number" &&
+        typeof usage.remaining === "number"
+      ) {
+        sendResponse(usage);
+      } else {
+        const config = await secureStorageService.retrieve("remote_config");
+        const limit = (config && config.rateLimitPerDay) || 100; 
+        sendResponse({ limit: limit, remaining: limit, reset: 0 });
+      }
+    })();
+    return true;
+  }
+
+  if (request.action === "updateRemoteConfig") {
+    (async () => {
+      try {
+        await updateRemoteConfig();
+        sendResponse({ success: true });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    return true;
+  }
+
+   if (request.action === "_debugSetRateLimit") {
+    (async () => {
+      try {
+        const rateLimitKey = `rate_limit_status`;
+        const config = await secureStorageService.retrieve("remote_config");
+        const limit = (config && config.rateLimitPerDay) || 100;
+        const usage = (await secureStorageService.retrieve(rateLimitKey)) || {
+          limit: limit,
+          remaining: limit,
+        };
+        const newRemaining = request.remaining;
+
+        if (typeof newRemaining !== "number") {
+          throw new Error("Invalid remaining value for debug set.");
+        }
+
+        usage.remaining = newRemaining;
+        await secureStorageService.save(rateLimitKey, usage);
+        sendResponse({ success: true, usage: usage });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
     })();
     return true;
   }
@@ -135,7 +286,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (elapsed < MIN_ENHANCE_INTERVAL_MS) {
         const waitMs = MIN_ENHANCE_INTERVAL_MS - elapsed;
         const waitSec = Math.ceil(waitMs / 1000);
-        sendResponse({ success: false, error: `Too many requests. Please wait ${waitSec}s and try again.` });
+        sendResponse({
+          success: false,
+          error: `Too many requests. Please wait ${waitSec}s and try again.`,
+        });
         return;
       }
       lastEnhanceAt = now;
@@ -151,9 +305,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === "install" || details.reason === "update") {
+    await updateRemoteConfig();
+  }
+});
+
+async function updateRemoteConfig() {
+  try {
+    const configUrl =
+      "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/api/config";
+    const response = await fetch(configUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch remote config: ${response.status}`);
+    }
+    const config = await response.json();
+    if (config && typeof config.rateLimitPerDay === "number") {
+      await secureStorageService.save("remote_config", {
+        rateLimitPerDay: config.rateLimitPerDay,
+      });
+    }
+  } catch (error) {
+    console.error("Could not update remote configuration:", error);
+  }
+}
+
 async function handleProxyRequest({ prompt }, sendResponse) {
   try {
-    const userToken = await getOrCreateUserToken();
+    const jwt = await getOrCreateJwt();
     const basePrompt = validationService.sanitizeInput((prompt || "").trim());
     if (!basePrompt) {
       throw new Error("Prompt is empty.");
@@ -163,7 +342,7 @@ async function handleProxyRequest({ prompt }, sendResponse) {
     }
     const sanitizedPrompt = basePrompt;
     const apiUrl =
-      "https://enhance-prompt-api.prompt-enhance-api.workers.dev/api/enhance";
+      "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/api/enhance";
 
     const response = await fetchWithRetry(
       apiUrl,
@@ -171,7 +350,7 @@ async function handleProxyRequest({ prompt }, sendResponse) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-User-Token": userToken,
+          Authorization: `Bearer ${jwt}`,
         },
         body: JSON.stringify({
           messages: [
@@ -199,18 +378,66 @@ Return only the enhanced prompt.`,
       300
     );
 
+    const limit = response.headers.get("X-RateLimit-Limit");
+    const remaining = response.headers.get("X-RateLimit-Remaining");
+    const reset = response.headers.get("X-RateLimit-Reset");
     const usageCount = response.headers.get("X-Usage-Count");
-    if (usageCount) {
-      const rateLimitKey = `rate_limit:${userToken}:not-collected`;
-      await secureStorageService.save(rateLimitKey, {
-        count: parseInt(usageCount, 10),
-      });
+
+     if (
+      limit !== null ||
+      remaining !== null ||
+      reset !== null ||
+      usageCount !== null
+    ) {
+      const rateLimitKey = `rate_limit_status`;
+
+      const currentUsage = (await secureStorageService.retrieve(
+        rateLimitKey
+      )) || { limit: 100, remaining: 100, reset: 0, count: 0 };
+
+      const parsedLimit = parseInt(limit, 10);
+      const parsedRemaining = parseInt(remaining, 10);
+      const parsedReset = parseInt(reset, 10);
+      const parsedCount = parseInt(usageCount, 10);
+
+      const effectiveLimit = !isNaN(parsedLimit)
+        ? parsedLimit
+        : currentUsage.limit;
+      const effectiveCount = !isNaN(parsedCount)
+        ? parsedCount
+        : currentUsage.count;
+      const derivedRemaining = !isNaN(parsedRemaining)
+        ? parsedRemaining
+        : Math.max(0, effectiveLimit - effectiveCount);
+
+      const newUsage = {
+        limit: effectiveLimit,
+        remaining: derivedRemaining,
+        reset: !isNaN(parsedReset) ? parsedReset : currentUsage.reset,
+        count: effectiveCount,
+      };
+
+      await secureStorageService.save(rateLimitKey, newUsage);
+
+      try {
+        // Use the same robust object for the UI update message
+        await chrome.runtime.sendMessage({
+          action: "rateLimitUpdate",
+          usage: newUsage,
+        });
+      } catch (_) {}
     }
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      const message = errorData?.message || errorData?.error || `Proxy service error: ${response.status}`;
-      throw new Error(message);
+      const message =
+        errorData?.message ||
+        errorData?.error ||
+        `Proxy service error: ${response.status}`;
+      const error = new Error(message);
+      error.status = response.status;
+      error.data = { code: errorData?.code };
+      throw error;
     }
 
     const data = await response.json();
@@ -223,7 +450,14 @@ Return only the enhanced prompt.`,
       throw new Error("Invalid response from proxy.");
     }
   } catch (error) {
-    sendResponse({ success: false, error: error.message });
+    sendResponse({
+      success: false,
+      error: {
+        message: error.message,
+        status: error.status,
+        data: error.data,
+      },
+    });
   }
 }
 

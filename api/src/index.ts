@@ -1,9 +1,14 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { KVNamespace } from "@cloudflare/workers-types";
+import { jwt, sign, verify, decode } from "hono/jwt";
+import type {
+  KVNamespace,
+  DurableObjectNamespace,
+  DurableObjectState,
+} from "@cloudflare/workers-types";
 
 export interface Env {
-  REQUEST_COUNT: KVNamespace;
+  RATE_LIMITER: DurableObjectNamespace;
   OPENROUTER_API_KEY: string;
   APP_HTTP_REFERER: string;
   ALLOWED_ORIGINS?: string;
@@ -14,6 +19,73 @@ export interface Env {
   DEFAULT_MODEL?: string;
   DEFAULT_MAX_TOKENS?: string;
   DEFAULT_TEMPERATURE?: string;
+  JWT_SECRET: string;
+  TURNSTILE_SECRET_KEY: string;
+  TURNSTILE_SITE_KEY: string;
+}
+
+export class RateLimiter {
+  state: DurableObjectState;
+  limit: number = 100;
+  windowMs: number = 24 * 60 * 60 * 1000;
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.state.blockConcurrencyWhile(async () => {
+      const storedLimit = await this.state.storage.get<number>("limit");
+      if (storedLimit) this.limit = storedLimit;
+    });
+    if (env.RATE_LIMIT_PER_DAY) {
+      this.limit = parseInt(env.RATE_LIMIT_PER_DAY, 10);
+    }
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const now = Date.now();
+    let { count, timestamp } = (await this.state.storage.get<{
+      count: number;
+      timestamp: number;
+    }>("current_window")) || { count: 0, timestamp: now };
+
+    if (now - timestamp > this.windowMs) {
+      count = 0;
+      timestamp = now;
+    }
+
+    const remaining = Math.max(0, this.limit - count);
+    const reset = Math.floor((timestamp + this.windowMs) / 1000);
+
+    if (count >= this.limit) {
+      return new Response(
+        JSON.stringify({
+          limit: this.limit,
+          remaining: 0,
+          reset,
+          success: false,
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const newCount = count + 1;
+    await this.state.storage.put("current_window", {
+      count: newCount,
+      timestamp,
+    });
+
+    return new Response(
+      JSON.stringify({
+        limit: this.limit,
+        remaining: this.limit - newCount,
+        reset,
+        success: true,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
 }
 
 type HonoContext = {
@@ -25,6 +97,11 @@ type HonoContext = {
       reset: number;
     };
     corsOrigin: string;
+    jwtPayload: {
+      sub: string;
+      iat: number;
+      exp: number;
+    };
   };
 };
 
@@ -50,6 +127,13 @@ function resolveAllowedOrigin(
     return requestedOrigin;
   }
 
+  if (
+    requestedOrigin.startsWith("chrome-extension://") &&
+    allowed.includes("chrome-extension://")
+  ) {
+    return requestedOrigin;
+  }
+
   return null;
 }
 
@@ -60,7 +144,7 @@ function buildBaseHeaders(
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "OPTIONS, POST",
-    "Access-Control-Allow-Headers": "Content-Type, X-User-Token",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
     "Access-Control-Expose-Headers":
       "X-Usage-Count, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset",
@@ -83,7 +167,17 @@ function jsonError(
   return c.json(payload, status, buildBaseHeaders(origin));
 }
 
-app.use("/api/enhance", async (c, next) => {
+app.use("*", async (c, next) => {
+  const { path } = c.req;
+  if (
+    path === "/turnstile" ||
+    path === "/api/config" ||
+    path === "/api/token"
+  ) {
+    await next();
+    return;
+  }
+
   const incomingOrigin = c.req.header("Origin");
   if (!incomingOrigin) {
     return jsonError(
@@ -115,77 +209,184 @@ app.use("/api/enhance", async (c, next) => {
     return new Response(null, { status: 204, headers });
   }
 
-  const userToken = c.req.header("X-User-Token");
+  await next();
+});
+
+app.use("/api/enhance", async (c, next) => {
+  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET });
+  return jwtMiddleware(c, next);
+});
+
+app.use("/api/enhance", async (c, next) => {
+  const userToken = c.get("jwtPayload").sub;
   if (!userToken) {
     const errOrigin = c.get("corsOrigin") as string;
-    return jsonError(c, 401, "UNAUTHORIZED", "Missing X-User-Token", errOrigin);
+    return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", errOrigin);
   }
 
   const RATE_LIMIT_PER_DAY = parseInt(c.env.RATE_LIMIT_PER_DAY || "100", 10);
   const ip = c.req.header("CF-Connecting-IP") || "unknown";
-  const rateLimitKey = `rate_limit:${userToken}:${ip}`;
 
-  const stored = (await c.env.REQUEST_COUNT.get(rateLimitKey, "json")) as {
-    count: number;
-    timestamp: number;
-  } | null;
-  const now = Date.now();
+  try {
+    const id = c.env.RATE_LIMITER.idFromName(`${userToken}:${ip}`);
+    const stub = c.env.RATE_LIMITER.get(id);
+    const res = await stub.fetch(c.req.url);
+    const rateLimitResult = await res.json<{
+      limit: number;
+      remaining: number;
+      reset: number;
+      success: boolean;
+    }>();
 
-  let count = stored?.count || 0;
-  let timestamp = stored?.timestamp || now;
-
-  if (now - timestamp > 24 * 60 * 60 * 1000) {
-    count = 0;
-    timestamp = now;
-  }
-
-  if (count >= RATE_LIMIT_PER_DAY) {
-    const reset = Math.floor((timestamp + 24 * 60 * 60 * 1000) / 1000);
-    const rateOrigin = (c.get("corsOrigin") as string) || "*";
-    const headers = buildBaseHeaders(rateOrigin, {
-      "X-RateLimit-Limit": String(RATE_LIMIT_PER_DAY),
-      "X-RateLimit-Remaining": "0",
-      "X-RateLimit-Reset": String(reset),
+    c.set("usageCount", RATE_LIMIT_PER_DAY - rateLimitResult.remaining);
+    c.set("rateLimit", {
+      limit: rateLimitResult.limit,
+      remaining: rateLimitResult.remaining,
+      reset: rateLimitResult.reset,
     });
-    return c.json(
-      { code: "RATE_LIMIT_EXCEEDED", message: "Rate limit exceeded" },
-      429,
-      headers
+
+    if (!rateLimitResult.success) {
+      const errOrigin = (c.get("corsOrigin") as string) || "*";
+      const headers = buildBaseHeaders(errOrigin, {
+        "X-RateLimit-Limit": String(rateLimitResult.limit),
+        "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+        "X-RateLimit-Reset": String(rateLimitResult.reset),
+      });
+      return c.json(
+        { code: "RATE_LIMIT_EXCEEDED", message: "Rate limit exceeded" },
+        429,
+        headers
+      );
+    }
+  } catch (e) {
+    console.error("Durable Object error:", e);
+    const errOrigin = (c.get("corsOrigin") as string) || "*";
+    return jsonError(
+      c,
+      500,
+      "INTERNAL_ERROR",
+      "Rate limiter failed",
+      errOrigin
     );
   }
-
-  const newCount = count + 1;
-  await c.env.REQUEST_COUNT.put(
-    rateLimitKey,
-    JSON.stringify({ count: newCount, timestamp }),
-    { expirationTtl: 86400 }
-  );
-
-  const reset = Math.floor((timestamp + 24 * 60 * 60 * 1000) / 1000);
-  c.set("usageCount", newCount);
-  c.set("rateLimit", {
-    limit: RATE_LIMIT_PER_DAY,
-    remaining: Math.max(0, RATE_LIMIT_PER_DAY - newCount),
-    reset,
-  });
 
   await next();
 });
 
-app.options("/api/enhance", (c) => {
-  const origin = c.get("corsOrigin");
-  return new Response(null, { status: 204, headers: buildBaseHeaders(origin) });
+app.get("/api/config", (c) => {
+  const incomingOrigin = c.req.header("Origin");
+  const validated =
+    resolveAllowedOrigin(incomingOrigin, c.env) || incomingOrigin || "null";
+  return c.json(
+    {
+      turnstileSiteKey: c.env.TURNSTILE_SITE_KEY,
+      rateLimitPerDay: parseInt(c.env.RATE_LIMIT_PER_DAY || "100", 10),
+    },
+    200,
+    buildBaseHeaders(validated)
+  );
 });
 
-// Generic CORS preflight for future endpoints
-app.options("*", (c) => {
-  const origin = resolveAllowedOrigin(c.req.header("Origin"), c.env);
-  if (!origin)
-    return new Response(null, {
-      status: 403,
-      headers: buildBaseHeaders("null"),
-    });
-  return new Response(null, { status: 204, headers: buildBaseHeaders(origin) });
+app.get("/turnstile", async (c) => {
+  const url = new URL(c.req.url);
+  const redirect = url.searchParams.get("redirect_uri") || "";
+  const isValid = /^https:\/\/[a-zA-Z0-9]+\.chromiumapp\.org\//.test(redirect);
+  if (!isValid) {
+    return new Response("Invalid redirect", { status: 400 });
+  }
+  const siteKey = c.env.TURNSTILE_SITE_KEY;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verify</title><style>html,body{height:100%;display:grid;place-items:center;background:#0b0b0c;color:#fff;margin:0}</style></head><body><div id="cf-turnstile"></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><script>window.addEventListener('load',function(){if(window.turnstile){turnstile.render('#cf-turnstile',{sitekey:'${siteKey}',callback:function(t){location.href='${redirect}#token='+encodeURIComponent(t);}});} else {document.body.innerHTML='<div style="color:#fff;font:14px sans-serif">Load error. Please refresh.</div>';}});</script></body></html>`;
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+});
+
+app.post("/api/token", async (c) => {
+  const incomingOrigin = c.req.header("Origin");
+  const origin =
+    resolveAllowedOrigin(incomingOrigin, c.env) || incomingOrigin || "*";
+  try {
+    const body = await c.req.json();
+    const turnstileToken = body.turnstileToken;
+
+    if (!turnstileToken) {
+      return jsonError(
+        c,
+        400,
+        "BAD_REQUEST",
+        "Turnstile token required",
+        origin
+      );
+    }
+
+    const secret = (c.env.TURNSTILE_SECRET_KEY || "").trim();
+    if (!secret) {
+      console.error("Missing or empty TURNSTILE_SECRET_KEY in worker environment");
+      return jsonError(
+        c,
+        500,
+        "SERVER_MISCONFIGURED",
+        "Turnstile secret key not configured on the server.",
+        origin
+      );
+    }
+
+    const ip = c.req.header("CF-Connecting-IP") || "";
+    const params = new URLSearchParams();
+    params.set("secret", secret);
+    params.set("response", turnstileToken);
+    if (ip) params.set("remoteip", ip);
+
+    const response = await fetch(
+      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+      }
+    );
+
+    const result: any = await response.json();
+    if (!result?.success) {
+      return c.json(
+        { code: "UNAUTHORIZED", message: "Turnstile verification failed", details: result?.["error-codes"] },
+        401,
+        buildBaseHeaders(origin)
+      );
+    }
+
+    const jwtSecret = (c.env.JWT_SECRET || "").trim();
+    if (!jwtSecret) {
+      console.error("Missing or empty JWT_SECRET in worker environment");
+      return jsonError(
+        c,
+        500,
+        "SERVER_MISCONFIGURED",
+        "JWT secret not configured on the server.",
+        origin
+      );
+    }
+
+    const userId = crypto.randomUUID();
+    const payload = {
+      sub: userId,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
+    };
+    const token = await sign(payload, jwtSecret);
+    return c.json({ token }, 200, buildBaseHeaders(origin));
+  } catch (e: any) {
+    const origin = c.get("corsOrigin") || "*";
+    console.error("/api/token error:", e?.message || e);
+    return c.json(
+      { code: "INTERNAL_ERROR", message: "Failed to issue token", details: e?.message || String(e) },
+      500,
+      buildBaseHeaders(origin)
+    );
+  }
 });
 
 app.post("/api/enhance", async (c) => {
@@ -279,12 +480,13 @@ app.post("/api/enhance", async (c) => {
       );
     }
 
-    if (!c.env.OPENROUTER_API_KEY) {
+    const openRouterKey = (c.env.OPENROUTER_API_KEY || "").trim();
+    if (!openRouterKey) {
       return jsonError(
         c,
         500,
         "SERVER_MISCONFIGURED",
-        "Missing OPENROUTER_API_KEY",
+        "Missing OPENROUTER_API_KEY in worker environment",
         origin
       );
     }
@@ -302,7 +504,7 @@ app.post("/api/enhance", async (c) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${c.env.OPENROUTER_API_KEY}`,
+          Authorization: `Bearer ${openRouterKey}`,
           "HTTP-Referer": c.env.APP_HTTP_REFERER,
           "X-Title": c.env.APP_TITLE || "Enhance Prompt",
         },
@@ -372,23 +574,24 @@ app.post("/api/enhance", async (c) => {
     headers.set("X-RateLimit-Limit", String(rate.limit));
     headers.set("X-RateLimit-Remaining", String(rate.remaining));
     headers.set("X-RateLimit-Reset", String(rate.reset));
-    headers.set("Access-Control-Allow-Origin", origin);
-    headers.set(
-      "Access-Control-Expose-Headers",
-      "X-Usage-Count, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset"
-    );
-    headers.set("Access-Control-Allow-Methods", "OPTIONS, POST");
-    headers.set("Access-Control-Allow-Headers", "Content-Type, X-User-Token");
-    headers.set("Access-Control-Max-Age", "86400");
-    headers.set("Cache-Control", "no-store");
-    headers.set("Vary", "Origin");
+    for (const [key, value] of Object.entries(buildBaseHeaders(origin))) {
+      headers.set(key, value);
+    }
 
     return new Response(response.body, {
       status: response.status,
       headers,
     });
-  } catch {
-    return jsonError(c, 500, "INTERNAL_ERROR", "Internal Server Error", origin);
+  } catch (e: any) {
+    return c.json(
+      {
+        code: "INTERNAL_ERROR",
+        message: "Internal Server Error",
+        details: e?.message || String(e),
+      },
+      500,
+      buildBaseHeaders(origin)
+    );
   }
 });
 

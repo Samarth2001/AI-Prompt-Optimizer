@@ -1,15 +1,20 @@
-name = "enhance-prompt-api"
+name = "prompt-enhancer-worker"
 main = "src/index.ts"
 compatibility_date = "2024-07-06"
 
- kv_namespaces = [
-  { binding = "REQUEST_COUNT", id = "841b23c76c1749ebac24aad0e661fab4", preview_id = "841b23c76c1749ebac24aad0e661fab4" }
+[durable_objects]
+bindings = [
+  { name = "RATE_LIMITER", class_name = "RateLimiter" }
 ]
 
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]
 
 [vars]
-APP_HTTP_REFERER = "https://enhance-prompt-api.prompt-enhance-api.workers.dev"
-ALLOWED_ORIGINS = "chrome-extension://kbehgalhehmelfbaanamllcikeefangp"
+TURNSTILE_SITE_KEY = "0x4AAAAAABuJscKiniqQx6Re"
+APP_HTTP_REFERER = "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev"
+ALLOWED_ORIGINS = "chrome-extension://"
 
 APP_TITLE = "Enhance Prompt"
 RATE_LIMIT_PER_DAY = "100"

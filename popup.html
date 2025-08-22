@@ -81,6 +81,11 @@
         border: 1px solid var(--border);
         border-radius: 8px;
         padding: 10px;
+        transition: border-color 0.3s ease;
+      }
+
+      .api-section.unlocked {
+        border-color: rgba(34, 197, 94, 0.4);
       }
 
       .api-header {
@@ -674,18 +679,18 @@
           class="input key-select"
           aria-label="Saved API keys"
         ></select>
-        <input
-          type="password"
-          id="unlock-input"
-          class="input masked"
-          placeholder="Enter passphrase"
-        />
-        <button id="unlock-button" class="btn btn-primary">Unlock</button>
+        <div class="input-group">
+          <input type="password" id="unlock-input" class="input masked" placeholder="Enter passphrase" />
+          <button id="unlock-button" class="btn btn-primary">Unlock</button>
+        </div>
+        
+        <div id="turnstile-container" class="hidden"></div>
       </div>
       <div class="api-actions">
         <button id="clear-key-button" class="btn btn-secondary hidden">
           Detach Active
         </button>
+        <button id="lock-key-button" class="btn btn-secondary hidden">Lock</button>
       </div>
       <div id="status-message" class="status"></div>
     </div>
@@ -713,6 +718,14 @@
       </ol>
     </div>
 
+    <div class="api-actions">
+      <button id="reset-extension-button" class="btn btn-secondary">
+        Reset extension
+      </button>
+    </div>
+
     <script type="module" src="popup.js"></script>
+    <script src="./services/secure-storage-service.js" type="module"></script>
+    <script src="./services/validation-service.js" type="module"></script>
   </body>
 </html>

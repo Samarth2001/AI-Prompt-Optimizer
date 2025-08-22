@@ -1,3 +1,10 @@
+function sanitizeText(text) {
+  if (typeof text !== "string") return text;
+  const temp = document.createElement("div");
+  temp.textContent = text;
+  return temp.textContent;
+}
+
 function showToast(message, type = "info") {
   const toast = document.createElement("div");
   toast.className = `prompt-enhancer-toast ${type}`;
@@ -16,6 +23,28 @@ function showToast(message, type = "info") {
   }, 3000);
 }
 
+function formatErrorMessage(error) {
+  if (typeof error === "string") {
+    return sanitizeText(error);
+  }
+  if (typeof error === "object" && error !== null) {
+    const status = error.status;
+    const code = error.data?.code;
+
+    if (status === 429 || code === "RATE_LIMIT_EXCEEDED") {
+      return "Daily limit reached. Try again tomorrow.";
+    }
+    if (status === 401 || code === "UNAUTHORIZED") {
+      return "Please reopen the popup.";
+    }
+    if (status >= 500 && status < 600) {
+      return "Service is temporarily unavailable. Try again shortly.";
+    }
+    return sanitizeText(error.message) || "An unknown error occurred.";
+  }
+  return "An unknown error occurred.";
+}
+
 async function enhancePrompt(prompt) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(
@@ -24,7 +53,10 @@ async function enhancePrompt(prompt) {
         if (response && response.success) {
           resolve(response.enhancedPrompt);
         } else {
-          showToast(response?.error || "Unknown error", "error");
+          showToast(
+            formatErrorMessage(response?.error) || "Unknown error",
+            "error"
+          );
           resolve(null);
         }
       }
@@ -45,8 +77,14 @@ async function handleEnhanceClick(event) {
     return;
   }
 
-  const originalContent = button.innerHTML;
-  button.innerHTML = '<div style="font-size: 10px;">...</div>';
+  const originalSvg = button.querySelector("svg");
+  const originalStyles = {
+    fontSize: button.style.fontSize,
+    color: button.style.color,
+  };
+
+  button.textContent = "...";
+  button.style.fontSize = "10px";
   button.style.opacity = "0.6";
   button.disabled = true;
 
@@ -54,18 +92,28 @@ async function handleEnhanceClick(event) {
     const enhancedPrompt = await enhancePrompt(currentText);
     if (enhancedPrompt) {
       window.__PE_utils.setTextToElement(textInput, enhancedPrompt);
-      button.innerHTML =
-        '<div style="font-size: 10px; color: #28a745;">✓</div>';
+      button.textContent = "✓";
+      button.style.fontSize = "10px";
+      button.style.color = "#28a745";
     } else {
-      button.innerHTML =
-        '<div style="font-size: 10px; color: #dc3545;">✗</div>';
+      button.textContent = "✗";
+      button.style.fontSize = "10px";
+      button.style.color = "#dc3545";
     }
   } catch (error) {
-    button.innerHTML = '<div style="font-size: 10px; color: #dc3545;">✗</div>';
+    button.textContent = "✗";
+    button.style.fontSize = "10px";
+    button.style.color = "#dc3545";
   }
 
   setTimeout(() => {
-    button.innerHTML = originalContent;
+    // Restore original SVG and styles
+    button.textContent = "";
+    if (originalSvg) {
+      button.appendChild(originalSvg.cloneNode(true));
+    }
+    button.style.fontSize = originalStyles.fontSize || "";
+    button.style.color = originalStyles.color || "";
     button.style.opacity = "1";
     button.disabled = false;
   }, 2000);
@@ -76,15 +124,24 @@ function createEnhanceButton(textInput) {
   button.className = "enhance-button";
   button.textInput = textInput;
   button.type = "button";
+  button.setAttribute("aria-label", "Enhance prompt");
 
   const siteStyle = window.__PE_config.getSiteStyle();
 
-  // Use SVG magic wand icon instead of PNG
-  button.innerHTML = `
-    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path d="M7.5 5.6L10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7zm12 9.8L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14zM22 2l-2.5 1.4L17 2l1.4 2.5L17 7l2.5-1.4L22 7l-1.4-2.5zm-7.63 5.29c-.39-.39-1.02-.39-1.41 0L1.29 18.96c-.39.39-.39 1.02 0 1.41l2.34 2.34c.39.39 1.02.39 1.41 0L16.7 10.05c.39-.39.39-1.02 0-1.41l-2.33-2.35z"/>
-    </svg>
-  `;
+  // Create SVG element
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+
+  // Create path element
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute(
+    "d",
+    "M7.5 5.6L10 7 8.6 4.5 10 2 7.5 3.4 5 2l1.4 2.5L5 7zm12 9.8L17 14l1.4 2.5L17 19l2.5-1.4L22 19l-1.4-2.5L22 14zM22 2l-2.5 1.4L17 2l1.4 2.5L17 7l2.5-1.4L22 7l-1.4-2.5zm-7.63 5.29c-.39-.39-1.02-.39-1.41 0L1.29 18.96c-.39.39-.39 1.02 0 1.41l2.34 2.34c.39.39 1.02.39 1.41 0L16.7 10.05c.39-.39.39-1.02 0-1.41l-2.33-2.35z"
+  );
+
+  svg.appendChild(path);
+  button.appendChild(svg);
 
   // Add hover effects with site-specific colors
   button.addEventListener("mouseenter", () => {
@@ -133,7 +190,6 @@ function addEnhanceButton(textInput) {
       delete textInput._enhanceCleanup;
     };
   } catch (error) {
-    console.error("Failed to add enhance button:", error);
     delete textInput.dataset.enhanced;
   }
 }
@@ -168,8 +224,12 @@ function getFocusedTextInput() {
   let element = document.activeElement;
   if (!element) return null;
   while (element && element !== document.body) {
-    if (element.tagName === 'TEXTAREA') return element;
-    if (element.tagName === 'INPUT' && (element.type === 'text' || element.type === 'search')) return element;
+    if (element.tagName === "TEXTAREA") return element;
+    if (
+      element.tagName === "INPUT" &&
+      (element.type === "text" || element.type === "search")
+    )
+      return element;
     if (element.isContentEditable) return element;
     element = element.parentElement;
   }
@@ -177,7 +237,7 @@ function getFocusedTextInput() {
 }
 
 function findEnhanceButtonForInput(textInput) {
-  const buttons = document.querySelectorAll('.enhance-button');
+  const buttons = document.querySelectorAll(".enhance-button");
   for (const btn of buttons) {
     if (btn.textInput === textInput) return btn;
   }
@@ -189,12 +249,14 @@ function attachKeyboardShortcut() {
   const handler = (e) => {
     const isModifier = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
     if (!isModifier || e.repeat) return;
-    const key = (e.key || '').toLowerCase();
-    if (key !== 'e') return;
+    const key = (e.key || "").toLowerCase();
+    if (key !== "e") return;
     const focused = getFocusedTextInput();
     if (!focused) return;
-    if (focused.dataset.enhanced !== 'true') {
-      try { addEnhanceButton(focused); } catch {}
+    if (focused.dataset.enhanced !== "true") {
+      try {
+        addEnhanceButton(focused);
+      } catch {}
     }
     const button = findEnhanceButtonForInput(focused);
     if (!button) return;
@@ -202,7 +264,7 @@ function attachKeyboardShortcut() {
     e.stopPropagation();
     button.click();
   };
-  window.addEventListener('keydown', handler, true);
+  window.addEventListener("keydown", handler, true);
   window.__PE_keydownHandlerAttached = true;
   window.__PE_keydownHandler = handler;
 }
@@ -213,16 +275,16 @@ function cleanup() {
     window.__PE_utils.cleanup(selectors);
   }
   if (window.__PE_keydownHandlerAttached && window.__PE_keydownHandler) {
-    window.removeEventListener('keydown', window.__PE_keydownHandler, true);
+    window.removeEventListener("keydown", window.__PE_keydownHandler, true);
     delete window.__PE_keydownHandlerAttached;
     delete window.__PE_keydownHandler;
   }
 }
 
+let processPageTimer = null;
 const observer = new MutationObserver((mutations) => {
   const selectors = window.__PE_config.getSiteSelectors();
 
-  // Only observe on supported AI chat sites
   if (!selectors) return;
 
   let needsProcessing = false;
@@ -230,7 +292,6 @@ const observer = new MutationObserver((mutations) => {
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) {
       if (node.nodeType === Node.ELEMENT_NODE) {
-        // Check if the new node itself is the input, or contains the input
         const hasTextInput = selectors.some((selector) => {
           try {
             return (
@@ -253,22 +314,19 @@ const observer = new MutationObserver((mutations) => {
   }
 
   if (needsProcessing) {
-    // Use a timeout to allow the page to finish rendering
-    setTimeout(processPage, 500);
+    clearTimeout(processPageTimer);
+    processPageTimer = setTimeout(processPage, 500);
   }
 });
 
 async function initialize() {
-  // Load shared config and utils to eliminate drift
   const { getSiteStyle, getSiteSelectors } = await import(
     chrome.runtime.getURL("config/site-config.js")
   );
   const utils = await import(chrome.runtime.getURL("utils/dom-utils.js"));
-  // Attach to window to keep current function calls minimal
   window.__PE_config = { getSiteStyle, getSiteSelectors };
   window.__PE_utils = utils;
 
-  // Only initialize on supported AI chat sites
   const selectors = window.__PE_config.getSiteSelectors();
   if (!selectors) {
     return;
@@ -277,7 +335,6 @@ async function initialize() {
   addGlobalCSS();
   attachKeyboardShortcut();
 
-  // Initial run with a small delay to ensure page is loaded
   setTimeout(() => {
     processPage();
   }, 1000);
@@ -286,15 +343,12 @@ async function initialize() {
     childList: true,
     subtree: true,
   });
+
+  window.addEventListener("beforeunload", cleanup);
 }
 
-// Start the process
 initialize();
 
-// Cleanup on page unload
-window.addEventListener("beforeunload", cleanup);
-
-// Re-process on navigation for SPA sites
 let lastUrl = location.href;
 new MutationObserver(() => {
   const url = location.href;

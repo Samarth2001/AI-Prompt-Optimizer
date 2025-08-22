@@ -25,4 +25,4 @@ The extension adds an "✨ Enhance" button to text fields on supported sites. Cl
 
 ## Disclaimer
 
-This is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI, Anthropic, Google, or any other AI service provider. 
+This is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI, Anthropic, Google, X, or any other AI service provider. 

@@ -5,8 +5,6 @@ class SecureStorageService {
     this.encryptionKeyId = "extension_encryption_key";
     this.passphraseMode = false;
     this.passphraseKey = null;
-    this.inactivityTimer = null;
-    this.INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
     this.PASSKEYED_KEYS = new Set(["byokApiKey"]);
     this.BYOK_KEYS_INDEX = "byok_keys_index";
     this.BYOK_ACTIVE_KEY_ID = "byok_active_key_id";
@@ -51,16 +49,11 @@ class SecureStorageService {
       byok_passphrase_salt: salt,
       byok_passphrase_enabled: true,
     });
-    this._touchPassphraseActivity();
   }
 
   disablePassphraseMode() {
     this.passphraseKey = null;
     this.passphraseMode = false;
-    if (this.inactivityTimer) {
-      clearTimeout(this.inactivityTimer);
-      this.inactivityTimer = null;
-    }
     chrome.storage.local
       .remove(["byok_passphrase_salt", "byok_passphrase_enabled"])
       .catch(() => {});
@@ -145,7 +138,6 @@ class SecureStorageService {
       byok_passphrase_salt: meta.salt,
     });
      await this.save("byokApiKey", plaintext);
-    this._touchPassphraseActivity();
   }
 
   async getActiveByokKeyId() {
@@ -192,7 +184,6 @@ class SecureStorageService {
 
     this.passphraseKey = derivedKey;
     this.passphraseMode = true;
-    this._touchPassphraseActivity();
   }
 
   async disablePassphraseModeAndReencrypt() {
@@ -247,9 +238,7 @@ class SecureStorageService {
         : await this.initializeEncryptionKey();
       const encryptedValue = await cryptoService.encrypt(value, encryptionKey);
       await chrome.storage.local.set({ [key]: encryptedValue });
-      if (usePassphrase) this._touchPassphraseActivity();
     } catch (error) {
-      console.error(`Failed to save data for key: ${key}`, error);
       throw new Error(`Failed to save data: ${error.message}`);
     }
   }
@@ -269,10 +258,8 @@ class SecureStorageService {
         return null;
       }
       const value = await cryptoService.decrypt(result[key], encryptionKey);
-      if (usePassphrase) this._touchPassphraseActivity();
       return value;
     } catch (error) {
-      console.error(`Failed to retrieve data for key: ${key}`, error);
          return null;
     }
   }
@@ -281,25 +268,12 @@ class SecureStorageService {
     try {
       await chrome.storage.local.remove(key);
     } catch (error) {
-      console.error(`Failed to remove data for key: ${key}`, error);
       throw new Error(`Failed to remove data: ${error.message}`);
     }
   }
  
   async clearApiKey() {
     return this.remove("encrypted_api_key");
-  }
-
-  _touchPassphraseActivity() {
-    if (!this.isPassphraseModeEnabled()) return;
-    if (this.inactivityTimer) clearTimeout(this.inactivityTimer);
-    this.inactivityTimer = setTimeout(() => {
-      this.passphraseKey = null;
-      this.passphraseMode = false;
-      this.inactivityTimer = null;
-      // Clear ephemeral runtime key after inactivity
-      chrome.storage.local.remove("byokApiKey").catch(() => {});
-    }, this.INACTIVITY_TIMEOUT_MS);
   }
 }
 

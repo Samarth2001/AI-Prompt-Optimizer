@@ -22,18 +22,31 @@ document.addEventListener("DOMContentLoaded", async () => {
   const apiPassInput = document.getElementById("api-pass-input");
   const keySwitcherRow = document.getElementById("key-switcher-row");
   const keySelect = document.getElementById("key-select");
+  const lockKeyButton = document.getElementById("lock-key-button");
+  const resetExtensionButton = document.getElementById(
+    "reset-extension-button"
+  );
   let cachedKeys = [];
 
   async function initialize() {
     const { mode } = await chrome.storage.local.get({ mode: "proxy" });
-    const hasKey = await secureStorageService.exists("byokApiKey");
     const configured = await secureStorageService.isPassphraseConfigured();
     await refreshKeyList();
+    if (mode === "proxy") {
+      try {
+        const response = await chrome.runtime.sendMessage({ action: "ensureValidJwt" });
+        if (response && !response.success) {
+          throw new Error(response.error || "Security check failed. Please try again.");
+        }
+      } catch (error) {
+        showStatus(error.message || "Could not connect to the service.", "error");
+      }
+    }
 
     modeToggle.checked = mode === "byok";
     document.body.dataset.mode = mode;
-    // controls will be enabled/disabled contextually; no separate passphrase UI now
-    updateUIMode(mode, hasKey);
+    const hasKey = await secureStorageService.exists("byokApiKey");
+     updateUIMode(mode, hasKey);
     updateModeLabel(mode);
 
     if (mode === "proxy") {
@@ -41,14 +54,32 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  function decodeJwt(token) {
+    try {
+      const [, payload] = token.split(".");
+      const decoded = atob(payload);
+      return JSON.parse(decoded);
+    } catch {
+      return null;
+    }
+  }
+
   async function updateUIMode(mode, hasApiKey) {
     document.body.dataset.mode = mode;
     apiSection.classList.toggle("hidden", mode !== "byok");
-    clearKeyButton.classList.toggle("hidden", !hasApiKey);
+
+    const unlocked = secureStorageService.isPassphraseModeEnabled();
+    apiSection.classList.toggle("unlocked", unlocked);
+    clearKeyButton.classList.toggle("hidden", !unlocked);
+    lockKeyButton.classList.toggle("hidden", !unlocked);
+    keySwitcherRow.classList.toggle(
+      "hidden",
+      keySelect.options.length === 0 || unlocked
+    );
+
     if (keyStatusRow && apiKeyGroup) {
       keyStatusRow.classList.toggle("hidden", false);
-      // default compact: status + +New; edit only when requested
-      apiKeyGroup.classList.toggle("hidden", true);
+       apiKeyGroup.classList.toggle("hidden", true);
       await updateKeyStatusBadge();
     }
     // show key switcher if there are saved keys
@@ -62,13 +93,30 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   async function updateUsage() {
     const usage = await chrome.runtime.sendMessage({ action: "getUsage" });
-    if (usage && typeof usage.count === "number") {
-      const DAILY_LIMIT = 100;
-      const remaining = Math.max(0, DAILY_LIMIT - usage.count);
-      usageText.textContent = `${remaining} / ${DAILY_LIMIT} remaining`;
-      usageProgress.style.width = `${(remaining / DAILY_LIMIT) * 100}%`;
-    }
+    renderUsage(usage);
   }
+
+  function renderUsage(usage) {
+    const limit = (usage && usage.limit) || 100;
+    const remaining = (usage && typeof usage.remaining === 'number') ? usage.remaining : limit;
+    
+    usageText.textContent = `${remaining} / ${limit} remaining`;
+    usageProgress.style.width = `${(remaining / limit) * 100}%`;
+  }
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.action === "rateLimitUpdate" && msg.usage) {
+      renderUsage(msg.usage);
+    }
+  });
+
+  chrome.storage.onChanged.addListener(async (changes, area) => {
+    if (area !== "local") return;
+    if (Object.prototype.hasOwnProperty.call(changes, "rate_limit_status")) {
+      const usage = await chrome.runtime.sendMessage({ action: "getUsage" });
+      renderUsage(usage);
+    }
+  });
 
   modeToggle.addEventListener("change", async () => {
     modeToggle.disabled = true;
@@ -97,6 +145,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       showStatus("Please enter an API key", "error");
       return;
     }
+    if (!apiKey.startsWith("sk-or-v1-")) {
+      showStatus("Invalid API key format", "error");
+      return;
+    }
     if (!apiPass) {
       showStatus("Please set a passphrase", "error");
       return;
@@ -120,8 +172,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // No separate passphrase toggle; handled via Save/Unlock
-
+  
   unlockButton.addEventListener("click", async () => {
     const pass = validationService.sanitizeInput(unlockInput.value);
     if (!pass) {
@@ -146,9 +197,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
       } catch (_) {}
       unlockInput.value = "";
-      showStatus("Key unlocked and activated", "success");
+      showStatus(
+        "Key unlocked. It will remain active until you lock it or close the browser.",
+        "success"
+      );
     } catch (e) {
-      showStatus(e.message || "Failed to unlock", "error");
+      showStatus(e.message || "Invalid passphrase. Please try again.", "error");
     }
     unlockButton.disabled = false;
   });
@@ -223,6 +277,35 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
+  lockKeyButton.addEventListener("click", async () => {
+    try {
+      await chrome.runtime.sendMessage({ action: "lockPassphrase" });
+      await secureStorageService.detachActiveByok();
+      const hasKey = await secureStorageService.exists("byokApiKey");
+      await updateUIMode("byok", hasKey);
+      showStatus("Key has been locked.", "info");
+    } catch (error) {
+      showStatus(`Error locking key: ${error.message}`, "error");
+    }
+  });
+
+  resetExtensionButton.addEventListener("click", async () => {
+    const confirmed = window.confirm(
+      "Are you sure you want to reset the extension? All saved keys and settings will be permanently deleted."
+    );
+    if (confirmed) {
+      try {
+        await chrome.storage.local.clear();
+        showStatus("Extension has been reset. Reloading...", "success");
+        // After clearing, we must re-fetch the remote config
+        await chrome.runtime.sendMessage({ action: "updateRemoteConfig" });
+        setTimeout(() => window.location.reload(), 1500);
+      } catch (error) {
+        showStatus(`Error resetting extension: ${error.message}`, "error");
+      }
+    }
+  });
+
   function showStatus(message, type) {
     statusMessage.textContent = message;
     statusMessage.className = `status ${type} show`;
@@ -275,3 +358,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   initialize();
 });
+
+function loadTurnstileScript() {
+  const script = document.createElement("script");
+  script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
+  script.async = true;
+  script.defer = true;
+  document.head.appendChild(script);
+}
+
