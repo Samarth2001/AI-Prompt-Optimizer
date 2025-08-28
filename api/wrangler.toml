@@ -1,0 +1,25 @@
+name = "prompt-enhancer-worker"
+main = "src/index.ts"
+compatibility_date = "2024-07-06"
+
+[durable_objects]
+bindings = [
+  { name = "RATE_LIMITER", class_name = "RateLimiter" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]
+
+[vars]
+TURNSTILE_SITE_KEY = "0x4AAAAAABuJscKiniqQx6Re"
+APP_HTTP_REFERER = "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev"
+ALLOWED_ORIGINS = "chrome-extension://"
+
+APP_TITLE = "Enhance Prompt"
+RATE_LIMIT_PER_DAY = "100"
+MAX_PROMPT_CHARS = "4000"
+REQUEST_TIMEOUT_MS = "15000"
+DEFAULT_MODEL = "google/gemini-2.0-flash-exp:free"
+DEFAULT_MAX_TOKENS = "500"
+DEFAULT_TEMPERATURE = "0.7"

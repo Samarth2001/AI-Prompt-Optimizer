@@ -1,14 +1,19 @@
 {
   "manifest_version": 3,
   "name": "Prompt Enhancer",
+  "short_name": "Enhancer",
   "version": "1.0",
-  "description": "Enhances prompts on various websites.",
+  "description": "Enhances prompts on various websites. Permission justification: 'storage' is used to save preferences and passphrase-protected keys.",
+  "minimum_chrome_version": "102",
   "permissions": [
     "storage",
-    "activeTab"
+    "identity"
+  ],
+  "host_permissions": [
+    "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self';"
+    "extension_pages": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://prompt-enhancer-worker.prompt-enhance-api.workers.dev https://openrouter.ai; frame-src 'self'; object-src 'none';"
   },
   "background": {
     "service_worker": "service-worker.js",
@@ -35,7 +40,10 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/*.png"],
+      "resources": [
+        "config/site-config.js",
+        "utils/dom-utils.js"
+      ],
       "matches": [
         "*://claude.ai/*",
         "*://*.claude.ai/*",

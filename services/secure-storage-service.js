@@ -1,131 +1,280 @@
-import { cryptoService } from './crypto-service.js';
+import { cryptoService } from "./crypto-service.js";
 
 class SecureStorageService {
   constructor() {
-    this.encryptionKeyId = 'extension_encryption_key';
-    this.encryptedApiKeyId = 'encrypted_api_key';
-    this.metadataId = 'encryption_metadata';
+    this.encryptionKeyId = "extension_encryption_key";
+    this.passphraseMode = false;
+    this.passphraseKey = null;
+    this.PASSKEYED_KEYS = new Set(["byokApiKey"]);
+    this.BYOK_KEYS_INDEX = "byok_keys_index";
+    this.BYOK_ACTIVE_KEY_ID = "byok_active_key_id";
   }
 
-  async initializeEncryption() {
-    try {
-      const result = await chrome.storage.local.get([this.encryptionKeyId]);
-      
-      if (!result[this.encryptionKeyId]) {
-        const newKey = await cryptoService.generateKey();
-        const exportedKey = await cryptoService.exportKey(newKey);
-        
-        await chrome.storage.local.set({
-          [this.encryptionKeyId]: exportedKey
-        });
-        
-        return newKey;
-      } else {
-        return await cryptoService.importKey(result[this.encryptionKeyId]);
+  async initializeEncryptionKey() {
+    const result = await chrome.storage.local.get(this.encryptionKeyId);
+    if (result[this.encryptionKeyId]) {
+      return cryptoService.importKey(result[this.encryptionKeyId]);
+    } else {
+      const newKey = await cryptoService.generateKey();
+      const exportedKey = await cryptoService.exportKey(newKey);
+      await chrome.storage.local.set({ [this.encryptionKeyId]: exportedKey });
+      return newKey;
+    }
+  }
+
+  async enablePassphraseMode(passphrase) {
+    if (typeof passphrase !== "string" || !passphrase.trim()) {
+      throw new Error("Passphrase required");
+    }
+    const { key: derivedKey, salt } = await cryptoService.deriveKeyFromPassword(
+      passphrase
+    );
+
+    const defaultKey = await this.initializeEncryptionKey();
+    for (const keyName of this.PASSKEYED_KEYS) {
+      const raw = await chrome.storage.local.get(keyName);
+      if (!raw || !raw[keyName]) continue;
+      try {
+        const plaintext = await cryptoService.decrypt(raw[keyName], defaultKey);
+        const reencrypted = await cryptoService.encrypt(plaintext, derivedKey);
+        await chrome.storage.local.set({ [keyName]: reencrypted });
+      } catch (_) {
+        // If decrypt fails, skip re-encryption for this key
       }
-    } catch (error) {
-      throw new Error(`Failed to initialize encryption: ${error.message}`);
+    }
+
+    this.passphraseKey = derivedKey;
+    this.passphraseMode = true;
+    await chrome.storage.local.set({
+      byok_passphrase_salt: salt,
+      byok_passphrase_enabled: true,
+    });
+  }
+
+  disablePassphraseMode() {
+    this.passphraseKey = null;
+    this.passphraseMode = false;
+    chrome.storage.local
+      .remove(["byok_passphrase_salt", "byok_passphrase_enabled"])
+      .catch(() => {});
+  }
+
+  async exists(key) {
+    const res = await chrome.storage.local.get(key);
+    return !!res && !!res[key];
+  }
+
+  async getKeysIndex() {
+    const { [this.BYOK_KEYS_INDEX]: idx } = await chrome.storage.local.get({
+      [this.BYOK_KEYS_INDEX]: {},
+    });
+    return idx || {};
+  }
+
+  async setKeysIndex(index) {
+    await chrome.storage.local.set({ [this.BYOK_KEYS_INDEX]: index });
+  }
+
+  async listByokKeys() {
+    const index = await this.getKeysIndex();
+    return Object.entries(index).map(([id, meta]) => ({
+      id,
+      name: meta?.name || "Unnamed",
+    }));
+  }
+
+  async addByokKey(name, apiKey, passphrase) {
+    if (typeof name !== "string" || !name.trim())
+      throw new Error("Name required");
+    if (typeof apiKey !== "string" || !apiKey.trim())
+      throw new Error("API key required");
+    if (typeof passphrase !== "string" || !passphrase.trim())
+      throw new Error("Passphrase required");
+
+    const { key: derivedKey, salt } = await cryptoService.deriveKeyFromPassword(
+      passphrase
+    );
+    const encryptedKeyBlob = await cryptoService.encrypt(apiKey, derivedKey);
+    const id = crypto.randomUUID();
+
+    const index = await this.getKeysIndex();
+    index[id] = { name: name.trim(), salt };
+    await this.setKeysIndex(index);
+    await chrome.storage.local.set({
+      [this._keyStorageName(id)]: encryptedKeyBlob,
+      byok_passphrase_enabled: true,
+    });
+    this.disablePassphraseMode();
+    return id;
+  }
+
+  async unlockByokKey(id, passphrase) {
+    if (!id) throw new Error("Key not selected");
+    if (typeof passphrase !== "string" || !passphrase.trim())
+      throw new Error("Passphrase required");
+    const index = await this.getKeysIndex();
+    const meta = index[id];
+    if (!meta || !Array.isArray(meta.salt)) throw new Error("Unknown key");
+    const encrypted = (
+      await chrome.storage.local.get(this._keyStorageName(id))
+    )[this._keyStorageName(id)];
+    if (!encrypted) throw new Error("Key data missing");
+
+    const derivedKey = await cryptoService.recreateKeyFromPassword(
+      passphrase,
+      meta.salt
+    );
+    let plaintext;
+    try {
+      plaintext = await cryptoService.decrypt(encrypted, derivedKey);
+    } catch (_) {
+      throw new Error("Invalid passphrase");
+    }
+    this.passphraseKey = derivedKey;
+    this.passphraseMode = true;
+    await chrome.storage.local.set({
+      [this.BYOK_ACTIVE_KEY_ID]: id,
+      byok_passphrase_enabled: true,
+      byok_passphrase_salt: meta.salt,
+    });
+     await this.save("byokApiKey", plaintext);
+  }
+
+  async getActiveByokKeyId() {
+    const { [this.BYOK_ACTIVE_KEY_ID]: id } = await chrome.storage.local.get(
+      this.BYOK_ACTIVE_KEY_ID
+    );
+    return id || null;
+  }
+
+  _keyStorageName(id) {
+    return `byok_key_${id}`;
+  }
+
+  async isPassphraseConfigured() {
+    const { byok_passphrase_enabled } = await chrome.storage.local.get({
+      byok_passphrase_enabled: false,
+    });
+    return !!byok_passphrase_enabled;
+  }
+
+  async unlockWithPassphrase(passphrase) {
+    if (typeof passphrase !== "string" || !passphrase.trim()) {
+      throw new Error("Passphrase required");
+    }
+    const { byok_passphrase_salt } = await chrome.storage.local.get({
+      byok_passphrase_salt: null,
+    });
+    if (!byok_passphrase_salt) {
+      throw new Error("No passphrase configured");
+    }
+    const derivedKey = await cryptoService.recreateKeyFromPassword(
+      passphrase,
+      byok_passphrase_salt
+    );
+
+    const stored = await chrome.storage.local.get("byokApiKey");
+    if (stored && stored.byokApiKey) {
+      try {
+        await cryptoService.decrypt(stored.byokApiKey, derivedKey);
+      } catch (_) {
+        throw new Error("Invalid passphrase");
+      }
+    }
+
+    this.passphraseKey = derivedKey;
+    this.passphraseMode = true;
+  }
+
+  async disablePassphraseModeAndReencrypt() {
+    const configured = await this.isPassphraseConfigured();
+    if (!configured) {
+      this.disablePassphraseMode();
+      return;
+    }
+
+    if (!this.isPassphraseModeEnabled()) {
+      throw new Error("Unlock required to disable");
+    }
+
+    try {
+      for (const keyName of this.PASSKEYED_KEYS) {
+        const raw = await chrome.storage.local.get(keyName);
+        if (!raw || !raw[keyName]) continue;
+
+        const plaintext = await cryptoService.decrypt(
+          raw[keyName],
+          this.passphraseKey
+        );
+        const defaultKey = await this.initializeEncryptionKey();
+        const reencrypted = await cryptoService.encrypt(plaintext, defaultKey);
+        await chrome.storage.local.set({ [keyName]: reencrypted });
+      }
+    } finally {
+      this.disablePassphraseMode();
     }
   }
 
-  async storeApiKey(apiKey) {
+  isPassphraseModeEnabled() {
+    return this.passphraseMode === true && this.passphraseKey !== null;
+  }
+ 
+  async detachActiveByok() {
     try {
-      const encryptionKey = await this.initializeEncryption();
-      const encryptedData = await cryptoService.encrypt(apiKey, encryptionKey);
-      
-      const metadata = {
-        timestamp: Date.now(),
-        version: '1.0'
-      };
+      await this.remove("byokApiKey");
+    } catch (_) {}
+    try {
+      await chrome.storage.local.remove(this.BYOK_ACTIVE_KEY_ID);
+    } catch (_) {}
+    this.disablePassphraseMode();
+  }
 
-      await chrome.storage.local.set({
-        [this.encryptedApiKeyId]: encryptedData,
-        [this.metadataId]: metadata
-      });
-
-      return true;
+  async save(key, value) {
+    try {
+      const usePassphrase =
+        this.isPassphraseModeEnabled() && this.PASSKEYED_KEYS.has(key);
+      const encryptionKey = usePassphrase
+        ? this.passphraseKey
+        : await this.initializeEncryptionKey();
+      const encryptedValue = await cryptoService.encrypt(value, encryptionKey);
+      await chrome.storage.local.set({ [key]: encryptedValue });
     } catch (error) {
-      throw new Error(`Failed to store API key: ${error.message}`);
+      throw new Error(`Failed to save data: ${error.message}`);
     }
   }
 
-  async retrieveApiKey() {
+  async retrieve(key) {
     try {
-      const result = await chrome.storage.local.get([
-        this.encryptedApiKeyId,
-        this.metadataId
-      ]);
-
-      if (!result[this.encryptedApiKeyId]) {
+      const result = await chrome.storage.local.get(key);
+      if (!result[key]) {
         return null;
       }
-
-      const encryptionKey = await this.initializeEncryption();
-      const decryptedApiKey = await cryptoService.decrypt(
-        result[this.encryptedApiKeyId],
-        encryptionKey
-      );
-
-      return decryptedApiKey;
+      const usePassphrase =
+        this.isPassphraseModeEnabled() && this.PASSKEYED_KEYS.has(key);
+      const encryptionKey = usePassphrase
+        ? this.passphraseKey
+        : await this.initializeEncryptionKey();
+      if (usePassphrase && !encryptionKey) {
+        return null;
+      }
+      const value = await cryptoService.decrypt(result[key], encryptionKey);
+      return value;
     } catch (error) {
-      throw new Error(`Failed to retrieve API key: ${error.message}`);
+         return null;
     }
   }
 
-  async hasStoredApiKey() {
+  async remove(key) {
     try {
-      const result = await chrome.storage.local.get([this.encryptedApiKeyId]);
-      return !!result[this.encryptedApiKeyId];
+      await chrome.storage.local.remove(key);
     } catch (error) {
-      return false;
+      throw new Error(`Failed to remove data: ${error.message}`);
     }
   }
-
+ 
   async clearApiKey() {
-    try {
-      await chrome.storage.local.remove([
-        this.encryptedApiKeyId,
-        this.metadataId
-      ]);
-      return true;
-    } catch (error) {
-      throw new Error(`Failed to clear API key: ${error.message}`);
-    }
-  }
-
-  async clearAllData() {
-    try {
-      await chrome.storage.local.remove([
-        this.encryptionKeyId,
-        this.encryptedApiKeyId,
-        this.metadataId
-      ]);
-      return true;
-    } catch (error) {
-      throw new Error(`Failed to clear all data: ${error.message}`);
-    }
-  }
-
-  async getStorageInfo() {
-    try {
-      const result = await chrome.storage.local.get([
-        this.encryptedApiKeyId,
-        this.metadataId
-      ]);
-
-      if (!result[this.metadataId]) {
-        return null;
-      }
-
-      return {
-        hasApiKey: !!result[this.encryptedApiKeyId],
-        timestamp: result[this.metadataId].timestamp,
-        version: result[this.metadataId].version
-      };
-    } catch (error) {
-      return null;
-    }
+    return this.remove("encrypted_api_key");
   }
 }
 
-export const secureStorageService = new SecureStorageService(); 
+export const secureStorageService = new SecureStorageService();
