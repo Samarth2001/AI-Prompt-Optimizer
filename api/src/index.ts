@@ -19,6 +19,7 @@ export interface Env {
   DEFAULT_MODEL?: string;
   DEFAULT_MAX_TOKENS?: string;
   DEFAULT_TEMPERATURE?: string;
+  SYSTEM_PROMPT?: string | { get: () => Promise<string> };
   JWT_SECRET: string;
   TURNSTILE_SECRET_KEY: string;
   TURNSTILE_SITE_KEY: string;
@@ -171,6 +172,32 @@ function jsonError(
   const payload: Record<string, unknown> = { code, message };
   if (details !== undefined) payload.details = details;
   return c.json(payload, status, buildBaseHeaders(origin));
+}
+
+async function resolveSystemPrompt(env: Env): Promise<string> {
+  const binding: any = (env as any).SYSTEM_PROMPT;
+  if (!binding) {
+    throw new Error("SYSTEM_PROMPT is not configured in the environment");
+  }
+  if (typeof binding === "string") {
+    const trimmed = binding.trim();
+    if (!trimmed) throw new Error("SYSTEM_PROMPT is empty");
+    return trimmed;
+  }
+  if (typeof binding.get === "function") {
+    const value = await binding.get();
+    if (typeof value === "string" && value.trim()) return value.trim();
+    throw new Error("SYSTEM_PROMPT store returned empty value");
+  }
+  throw new Error("SYSTEM_PROMPT binding type is not supported");
+}
+
+function injectSystemPrompt(
+  systemPrompt: string,
+  messages: Array<{ role: string; content: string }>
+): Array<{ role: string; content: string }> {
+  const withoutSystem = messages.filter((m) => m.role !== "system");
+  return [{ role: "system", content: systemPrompt }, ...withoutSystem];
 }
 
 app.use("*", async (c, next) => {
@@ -527,6 +554,11 @@ app.post("/api/enhance", async (c) => {
 
     let response: Response;
     try {
+      const systemPrompt = await resolveSystemPrompt(c.env);
+      const payload = {
+        ...validation.data,
+        messages: injectSystemPrompt(systemPrompt, validation.data.messages),
+      };
       response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -535,7 +567,281 @@ app.post("/api/enhance", async (c) => {
           "HTTP-Referer": c.env.APP_HTTP_REFERER,
           "X-Title": c.env.APP_TITLE || "Enhance Prompt",
         },
-        body: JSON.stringify(validation.data),
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        clearTimeout(timeoutId);
+        return jsonError(
+          c,
+          504,
+          "UPSTREAM_TIMEOUT",
+          "Upstream request timed out",
+          origin
+        );
+      }
+      clearTimeout(timeoutId);
+      return jsonError(
+        c,
+        502,
+        "UPSTREAM_UNAVAILABLE",
+        "Upstream request failed",
+        origin
+      );
+    }
+    clearTimeout(timeoutId);
+
+    const usageCount = c.get("usageCount") as number;
+    const rate = c.get("rateLimit") as {
+      limit: number;
+      remaining: number;
+      reset: number;
+    };
+
+    if (!response.ok) {
+      let upstreamPayload: unknown = null;
+      const ct = response.headers.get("content-type") || "";
+      try {
+        if (ct.includes("application/json")) {
+          upstreamPayload = await response.json();
+        } else {
+          const txt = await response.text();
+          upstreamPayload = txt.slice(0, 2000);
+        }
+      } catch {}
+      const headers = buildBaseHeaders(origin, {
+        "Content-Type": "application/json",
+        "X-Usage-Count": String(usageCount),
+        "X-RateLimit-Limit": String(rate.limit),
+        "X-RateLimit-Remaining": String(rate.remaining),
+        "X-RateLimit-Reset": String(rate.reset),
+      });
+      return new Response(
+        JSON.stringify({
+          code: "UPSTREAM_ERROR",
+          message: "Upstream error",
+          status: response.status,
+          upstream: upstreamPayload,
+        }),
+        { status: response.status, headers: new Headers(headers) }
+      );
+    }
+
+    const headers = new Headers(response.headers);
+    headers.set("X-Usage-Count", String(usageCount));
+    headers.set("X-RateLimit-Limit", String(rate.limit));
+    headers.set("X-RateLimit-Remaining", String(rate.remaining));
+    headers.set("X-RateLimit-Reset", String(rate.reset));
+    for (const [key, value] of Object.entries(buildBaseHeaders(origin))) {
+      headers.set(key, value);
+    }
+
+    return new Response(response.body, {
+      status: response.status,
+      headers,
+    });
+  } catch (e: any) {
+    return c.json(
+      {
+        code: "INTERNAL_ERROR",
+        message: "Internal Server Error",
+        details: e?.message || String(e),
+      },
+      500,
+      buildBaseHeaders(origin)
+    );
+  }
+});
+
+// BYOK variant: user provides an OpenRouter API key per request via header.
+// System prompt is injected server-side to avoid exposing it in client code.
+app.use("/api/enhance/byok", async (c, next) => {
+  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET });
+  return jwtMiddleware(c, next);
+});
+
+app.use("/api/enhance/byok", async (c, next) => {
+  const userToken = (c.get("jwtPayload") as any)?.sub;
+  if (!userToken) {
+    const errOrigin = c.get("corsOrigin") as string;
+    return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", errOrigin);
+  }
+
+  const RATE_LIMIT_PER_DAY = parseInt(c.env.RATE_LIMIT_PER_DAY || "100", 10);
+  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+
+  try {
+    const id = c.env.RATE_LIMITER.idFromName(`${userToken}:${ip}`);
+    const stub = c.env.RATE_LIMITER.get(id);
+    const res = await stub.fetch(c.req.url);
+    const rateLimitResult = await res.json<{
+      limit: number;
+      remaining: number;
+      reset: number;
+      success: boolean;
+    }>();
+
+    c.set("usageCount", RATE_LIMIT_PER_DAY - rateLimitResult.remaining);
+    c.set("rateLimit", {
+      limit: rateLimitResult.limit,
+      remaining: rateLimitResult.remaining,
+      reset: rateLimitResult.reset,
+    });
+
+    if (!rateLimitResult.success) {
+      const errOrigin = (c.get("corsOrigin") as string) || "*";
+      const headers = buildBaseHeaders(errOrigin, {
+        "X-RateLimit-Limit": String(rateLimitResult.limit),
+        "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+        "X-RateLimit-Reset": String(rateLimitResult.reset),
+      });
+      return c.json(
+        { code: "RATE_LIMIT_EXCEEDED", message: "Rate limit exceeded" },
+        429,
+        headers
+      );
+    }
+  } catch (e) {
+    console.error("Durable Object error:", e);
+    const errOrigin = (c.get("corsOrigin") as string) || "*";
+    return jsonError(
+      c,
+      500,
+      "INTERNAL_ERROR",
+      "Rate limiter failed",
+      errOrigin
+    );
+  }
+
+  await next();
+});
+
+app.post("/api/enhance/byok", async (c) => {
+  const origin = c.get("corsOrigin");
+  try {
+    const contentLengthHeader = c.req.header("Content-Length");
+    if (contentLengthHeader && Number(contentLengthHeader) > MAX_BODY_BYTES) {
+      return jsonError(
+        c,
+        413,
+        "PAYLOAD_TOO_LARGE",
+        "Request body too large",
+        origin
+      );
+    }
+
+    const MAX_PROMPT_CHARS = parseInt(c.env.MAX_PROMPT_CHARS || "4000", 10);
+    const DEFAULT_MODEL =
+      c.env.DEFAULT_MODEL || "google/gemini-2.0-flash-exp:free";
+    const DEFAULT_MAX_TOKENS = parseInt(c.env.DEFAULT_MAX_TOKENS || "500", 10);
+    const DEFAULT_TEMPERATURE = parseFloat(c.env.DEFAULT_TEMPERATURE || "0.7");
+
+    const apiRequestSchema = z.object({
+      model: z.string().optional().default(DEFAULT_MODEL),
+      messages: z
+        .array(
+          z.object({
+            role: z.string(),
+            content: z.string().min(1).max(MAX_PROMPT_CHARS),
+          })
+        )
+        .min(1),
+      max_tokens: z
+        .number()
+        .int()
+        .positive()
+        .max(4096)
+        .optional()
+        .default(DEFAULT_MAX_TOKENS),
+      temperature: z
+        .number()
+        .min(0)
+        .max(2)
+        .optional()
+        .default(DEFAULT_TEMPERATURE),
+    });
+
+    const rawText = await c.req.text();
+    const rawBytes = new TextEncoder().encode(rawText).length;
+    if (rawBytes > MAX_BODY_BYTES) {
+      return jsonError(
+        c,
+        413,
+        "PAYLOAD_TOO_LARGE",
+        "Request body too large",
+        origin
+      );
+    }
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawText || "{}");
+    } catch {
+      return jsonError(c, 400, "INVALID_JSON", "Malformed JSON body", origin);
+    }
+
+    const validation = apiRequestSchema.safeParse(body);
+    if (!validation.success) {
+      return c.json(
+        {
+          code: "INVALID_BODY",
+          message: "Invalid request body",
+          details: validation.error.flatten(),
+        },
+        400,
+        buildBaseHeaders(origin)
+      );
+    }
+
+    const totalPromptChars = validation.data.messages.reduce(
+      (sum, m) => sum + m.content.length,
+      0
+    );
+    if (totalPromptChars > MAX_PROMPT_CHARS) {
+      return jsonError(
+        c,
+        413,
+        "PROMPT_TOO_LARGE",
+        "Prompt length exceeds limit",
+        origin
+      );
+    }
+
+    const byokKey = (c.req.header("X-Byok-Key") || c.req.header("x-byok-key") || "").trim();
+    if (!byokKey) {
+      return jsonError(
+        c,
+        400,
+        "MISSING_BYOK_KEY",
+        "X-Byok-Key header required",
+        origin
+      );
+    }
+
+    const REQUEST_TIMEOUT_MS = parseInt(
+      c.env.REQUEST_TIMEOUT_MS || "15000",
+      10
+    );
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      const systemPrompt = await resolveSystemPrompt(c.env);
+      const payload = {
+        ...validation.data,
+        messages: injectSystemPrompt(systemPrompt, validation.data.messages),
+      };
+      response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${byokKey}`,
+          "HTTP-Referer": c.env.APP_HTTP_REFERER,
+          "X-Title": c.env.APP_TITLE || "Enhance Prompt",
+        },
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
     } catch (err: any) {

@@ -402,24 +402,7 @@ async function handleProxyRequest({ prompt }, sendResponse) {
           Authorization: `Bearer ${jwt}`,
         },
         body: JSON.stringify({
-          messages: [
-            {
-              role: "system",
-              content: `You are a pragmatic prompt optimizer. Rewrite the user's prompt so an AI can produce exactly what they want.
-
-Directives:
-- Preserve the user's intent, constraints, domain terms, code, and any quoted text. Do not change the ask.
-- Keep the original language and tone; if unclear, default to neutral and professional.
-- Do not overengineer. Be concise and focused; avoid redundancy.
-- If essential context is missing (purpose, audience, format, length, success criteria, key constraints), add only the minimal helpful details to remove ambiguity. Use reasonable defaults; avoid speculation.
-- When the request is vague, clarify the objective in one short sentence, then specify deliverable, must-have content, and constraints succinctly.
-- Never include meta commentary, explanations, labels, or special tokens (e.g., <think>). Do not use markdown fences, headings, or quotes.
-- Output only the enhanced prompt, ready to send to a model.
-
-Return only the enhanced prompt.`,
-            },
-            { role: "user", content: sanitizedPrompt },
-          ],
+          messages: [{ role: "user", content: sanitizedPrompt }],
         }),
       },
       3,
@@ -525,36 +508,22 @@ async function handleByokRequest({ prompt }, sendResponse) {
       throw new Error(`Prompt exceeds ${MAX_PROMPT_CHARS} characters.`);
     }
     const sanitizedPrompt = basePrompt;
+
+    const jwt = await getOrCreateJwt();
+    const apiUrl =
+      "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/api/enhance/byok";
+
     const response = await fetchWithRetry(
-      "https://openrouter.ai/api/v1/chat/completions",
+      apiUrl,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-          "HTTP-Referer": APP_HTTP_REFERER,
-          "X-Title": APP_X_TITLE,
+          Authorization: `Bearer ${jwt}`,
+          "X-Byok-Key": apiKey,
         },
         body: JSON.stringify({
-          model: DEFAULT_MODEL,
-          messages: [
-            {
-              role: "system",
-              content: `You are a pragmatic prompt optimizer. Rewrite the user's prompt so an AI can produce exactly what they want.
-
-Directives:
-- Preserve the user's intent, constraints, domain terms, code, and any quoted text. Do not change the ask.
-- Keep the original language and tone; if unclear, default to neutral and professional.
-- Do not overengineer. Be concise and focused; avoid redundancy.
-- If essential context is missing (purpose, audience, format, length, success criteria, key constraints), add only the minimal helpful details to remove ambiguity. Use reasonable defaults; avoid speculation.
-- When the request is vague, clarify the objective in one short sentence, then specify deliverable, must-have content, and constraints succinctly.
-- Never include meta commentary, explanations, labels, or special tokens (e.g., <think>). Do not use markdown fences, headings, or quotes.
-- Output only the enhanced prompt, ready to send to a model.
-
-Return only the enhanced prompt.`,
-            },
-            { role: "user", content: sanitizedPrompt },
-          ],
+          messages: [{ role: "user", content: sanitizedPrompt }],
         }),
       },
       2,
@@ -562,11 +531,65 @@ Return only the enhanced prompt.`,
       500
     );
 
+    const limit = response.headers.get("X-RateLimit-Limit");
+    const remaining = response.headers.get("X-RateLimit-Remaining");
+    const reset = response.headers.get("X-RateLimit-Reset");
+    const usageCount = response.headers.get("X-Usage-Count");
+
+    if (
+      limit !== null ||
+      remaining !== null ||
+      reset !== null ||
+      usageCount !== null
+    ) {
+      const rateLimitKey = `rate_limit_status`;
+
+      const currentUsage = (await secureStorageService.retrieve(
+        rateLimitKey
+      )) || { limit: 100, remaining: 100, reset: 0, count: 0 };
+
+      const parsedLimit = parseInt(limit, 10);
+      const parsedRemaining = parseInt(remaining, 10);
+      const parsedReset = parseInt(reset, 10);
+      const parsedCount = parseInt(usageCount, 10);
+
+      const effectiveLimit = !isNaN(parsedLimit)
+        ? parsedLimit
+        : currentUsage.limit;
+      const effectiveCount = !isNaN(parsedCount)
+        ? parsedCount
+        : currentUsage.count;
+      const derivedRemaining = !isNaN(parsedRemaining)
+        ? parsedRemaining
+        : Math.max(0, effectiveLimit - effectiveCount);
+
+      const newUsage = {
+        limit: effectiveLimit,
+        remaining: derivedRemaining,
+        reset: !isNaN(parsedReset) ? parsedReset : currentUsage.reset,
+        count: effectiveCount,
+      };
+
+      await secureStorageService.save(rateLimitKey, newUsage);
+
+      try {
+        await chrome.runtime.sendMessage({
+          action: "rateLimitUpdate",
+          usage: newUsage,
+        });
+      } catch (_) {}
+    }
+
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(
-        errorData.error?.message || `OpenRouter API error: ${response.status}`
-      );
+      const message =
+        errorData?.message ||
+        errorData?.error ||
+        `Proxy service error: ${response.status}`;
+      const error = new Error(message);
+      error.status = response.status;
+      error.data = { code: errorData?.code };
+      throw error;
     }
 
     const data = await response.json();
@@ -576,9 +599,12 @@ Return only the enhanced prompt.`,
         enhancedPrompt: data.choices[0].message.content.trim(),
       });
     } else {
-      throw new Error("Invalid response from OpenRouter.");
+      throw new Error("Invalid response from proxy.");
     }
   } catch (error) {
-    sendResponse({ success: false, error: error.message });
+    sendResponse({
+      success: false,
+      error: typeof error === "object" && error && error.message ? error.message : String(error),
+    });
   }
 }
