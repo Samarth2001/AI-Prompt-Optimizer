@@ -296,6 +296,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (confirmed) {
       try {
         await chrome.storage.local.clear();
+        try { await chrome.storage.session.clear(); } catch (_) {}
         showStatus("Extension has been reset. Reloading...", "success");
         // After clearing, we must re-fetch the remote config
         await chrome.runtime.sendMessage({ action: "updateRemoteConfig" });

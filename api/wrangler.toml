@@ -15,6 +15,8 @@ new_sqlite_classes = ["RateLimiter"]
 TURNSTILE_SITE_KEY = "0x4AAAAAABuJscKiniqQx6Re"
 APP_HTTP_REFERER = "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev"
 ALLOWED_ORIGINS = "chrome-extension://"
+ALLOWED_HOSTS = "claude.ai,chat.openai.com,chatgpt.com,gemini.google.com,grok.com"
+MIN_ENHANCE_INTERVAL_MS = "3000"
 
 APP_TITLE = "Enhance Prompt"
 RATE_LIMIT_PER_DAY = "100"

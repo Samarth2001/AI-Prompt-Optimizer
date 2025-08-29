@@ -12,6 +12,8 @@ export interface Env {
   OPENROUTER_API_KEY: string;
   APP_HTTP_REFERER: string;
   ALLOWED_ORIGINS?: string;
+  ALLOWED_HOSTS?: string;
+  MIN_ENHANCE_INTERVAL_MS?: string;
   APP_TITLE?: string;
   RATE_LIMIT_PER_DAY?: string;
   MAX_PROMPT_CHARS?: string;
@@ -324,6 +326,16 @@ app.get("/api/config", (c) => {
     {
       turnstileSiteKey: c.env.TURNSTILE_SITE_KEY,
       rateLimitPerDay: parseInt(c.env.RATE_LIMIT_PER_DAY || "100", 10),
+      maxPromptChars: parseInt(c.env.MAX_PROMPT_CHARS || "4000", 10),
+      defaultModel: c.env.DEFAULT_MODEL || "google/gemini-2.0-flash-exp:free",
+      allowedHosts: (c.env.ALLOWED_HOSTS || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      minEnhanceIntervalMs: parseInt(
+        c.env.MIN_ENHANCE_INTERVAL_MS || "3000",
+        10
+      ),
     },
     200,
     buildBaseHeaders(validated)
@@ -557,6 +569,7 @@ app.post("/api/enhance", async (c) => {
       const systemPrompt = await resolveSystemPrompt(c.env);
       const payload = {
         ...validation.data,
+        model: DEFAULT_MODEL,
         messages: injectSystemPrompt(systemPrompt, validation.data.messages),
       };
       response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -738,6 +751,7 @@ app.post("/api/enhance/byok", async (c) => {
     const DEFAULT_TEMPERATURE = parseFloat(c.env.DEFAULT_TEMPERATURE || "0.7");
 
     const apiRequestSchema = z.object({
+      byokKey: z.string().min(1, "byokKey required"),
       model: z.string().optional().default(DEFAULT_MODEL),
       messages: z
         .array(
@@ -808,16 +822,7 @@ app.post("/api/enhance/byok", async (c) => {
       );
     }
 
-    const byokKey = (c.req.header("X-Byok-Key") || c.req.header("x-byok-key") || "").trim();
-    if (!byokKey) {
-      return jsonError(
-        c,
-        400,
-        "MISSING_BYOK_KEY",
-        "X-Byok-Key header required",
-        origin
-      );
-    }
+    const byokKey = validation.data.byokKey.trim();
 
     const REQUEST_TIMEOUT_MS = parseInt(
       c.env.REQUEST_TIMEOUT_MS || "15000",
@@ -829,10 +834,12 @@ app.post("/api/enhance/byok", async (c) => {
     let response: Response;
     try {
       const systemPrompt = await resolveSystemPrompt(c.env);
+      const { byokKey: _omit, ...rest } = validation.data as any;
       const payload = {
-        ...validation.data,
-        messages: injectSystemPrompt(systemPrompt, validation.data.messages),
-      };
+        ...rest,
+        model: DEFAULT_MODEL,
+        messages: injectSystemPrompt(systemPrompt, rest.messages),
+      } as any;
       response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
