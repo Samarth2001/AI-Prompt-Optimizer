@@ -358,3 +358,64 @@ new MutationObserver(() => {
     setTimeout(processPage, 2000);
   }
 }).observe(document, { subtree: true, childList: true });
+
+// --- Inline Turnstile overlay injection ---
+function openTurnstileOverlay(embedUrl) {
+  try {
+    if (document.getElementById("pe-ts-overlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "pe-ts-overlay";
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:2147483647;display:flex;align-items:flex-end;justify-content:center;";
+    const modal = document.createElement("div");
+    modal.style.cssText = "background:#111;border-radius:8px;padding:12px;width:340px;max-width:90%;margin:24px;box-shadow:0 20px 40px rgba(0,0,0,.5)";
+    const frame = document.createElement("iframe");
+    frame.src = embedUrl;
+    frame.style.cssText = "border:0;width:100%;height:100px;border-radius:6px;background:#111";
+    frame.setAttribute("allow", "clipboard-write");
+    modal.appendChild(frame);
+    overlay.appendChild(modal);
+    overlay.addEventListener(
+      "click",
+      function (e) {
+        if (e.target === overlay) closeTurnstileOverlay();
+      },
+      true
+    );
+    document.body.appendChild(overlay);
+
+    function onMsg(ev) {
+      try {
+        const o = new URL(embedUrl).origin;
+        if (ev.origin !== o) return;
+        const d = ev.data || {};
+        if (d.type === "turnstile:token" && d.token) {
+          window.removeEventListener("message", onMsg);
+          closeTurnstileOverlay();
+          chrome.runtime.sendMessage({ action: "turnstileToken", token: String(d.token) });
+        }
+        if (d.type === "turnstile:cancel" || d.type === "turnstile:error" || d.type === "turnstile:timeout") {
+          window.removeEventListener("message", onMsg);
+          closeTurnstileOverlay();
+          chrome.runtime.sendMessage({ action: "turnstileCanceled", reason: d.type });
+        }
+      } catch (_) {}
+    }
+    window.addEventListener("message", onMsg, false);
+  } catch (_) {}
+}
+
+function closeTurnstileOverlay() {
+  const el = document.getElementById("pe-ts-overlay");
+  if (el) el.remove();
+}
+
+chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
+  try {
+    if (request && request.action === "startTurnstileOverlay" && request.embedUrl) {
+      openTurnstileOverlay(request.embedUrl);
+      sendResponse({ ok: true });
+      return true;
+    }
+  } catch (_) {}
+  return false;
+});

@@ -123,6 +123,12 @@ function resolveAllowedOrigin(
     .map((s) => s.trim())
     .filter(Boolean);
 
+  if (requestedOrigin === "null") {
+    if (allowed.includes("null") || allowed.includes("chrome-extension://")) {
+      return "null";
+    }
+  }
+
   if (allowed.includes(requestedOrigin)) {
     return requestedOrigin;
   }
@@ -171,6 +177,7 @@ app.use("*", async (c, next) => {
   const { path } = c.req;
   if (
     path === "/turnstile" ||
+    path === "/turnstile-embed" ||
     path === "/api/config" ||
     path === "/api/token"
   ) {
@@ -180,6 +187,15 @@ app.use("*", async (c, next) => {
 
   const incomingOrigin = c.req.header("Origin");
   if (!incomingOrigin) {
+    if (path === "/api/enhance") {
+      c.set("corsOrigin", "*");
+      if (c.req.method === "OPTIONS") {
+        const headers = buildBaseHeaders("*");
+        return new Response(null, { status: 204, headers });
+      }
+      await next();
+      return;
+    }
     return jsonError(
       c,
       403,
@@ -296,6 +312,17 @@ app.get("/turnstile", async (c) => {
   }
   const siteKey = c.env.TURNSTILE_SITE_KEY;
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verify</title><style>html,body{height:100%;display:grid;place-items:center;background:#0b0b0c;color:#fff;margin:0}</style></head><body><div id="cf-turnstile"></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><script>window.addEventListener('load',function(){if(window.turnstile){turnstile.render('#cf-turnstile',{sitekey:'${siteKey}',callback:function(t){location.href='${redirect}#token='+encodeURIComponent(t);}});} else {document.body.innerHTML='<div style="color:#fff;font:14px sans-serif">Load error. Please refresh.</div>';}});</script></body></html>`;
+  return new Response(html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+});
+
+app.get("/turnstile-embed", async (c) => {
+  const siteKey = c.env.TURNSTILE_SITE_KEY;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verify</title><style>html,body{height:100%;display:grid;place-items:center;background:#0b0b0c;color:#fff;margin:0;font:14px system-ui}</style></head><body><div id="cf-turnstile"></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><script>window.addEventListener('load',function(){function r(){if(!window.turnstile){setTimeout(r,50);return;}turnstile.render('#cf-turnstile',{sitekey:'${siteKey}',theme:'dark',size:'normal',callback:function(t){parent.postMessage({type:'turnstile:token',token:t},'*');},'error-callback':function(){parent.postMessage({type:'turnstile:error'},'*');},'timeout-callback':function(){parent.postMessage({type:'turnstile:timeout'},'*');}});}r();});</script></body></html>`;
   return new Response(html, {
     headers: {
       "content-type": "text/html; charset=utf-8",
