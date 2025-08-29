@@ -11,7 +11,7 @@
     "tabs"
   ],
   "host_permissions": [
-    "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/"
+    "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/*"
   ],
   "content_security_policy": {
     "extension_pages": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://prompt-enhancer-worker.prompt-enhance-api.workers.dev; frame-src 'self'; object-src 'none';"
