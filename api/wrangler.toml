@@ -4,12 +4,17 @@ compatibility_date = "2024-07-06"
 
 [durable_objects]
 bindings = [
-  { name = "RATE_LIMITER", class_name = "RateLimiter" }
+  { name = "RATE_LIMITER", class_name = "RateLimiter" },
+  { name = "USAGE_AGGREGATOR", class_name = "UsageAggregator" }
 ]
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RateLimiter"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["UsageAggregator"]
 
 [vars]
 TURNSTILE_SITE_KEY = "0x4AAAAAABuJscKiniqQx6Re"
@@ -17,11 +22,12 @@ APP_HTTP_REFERER = "https://prompt-enhancer-worker.prompt-enhance-api.workers.de
 ALLOWED_ORIGINS = "chrome-extension://"
 ALLOWED_HOSTS = "claude.ai,chat.openai.com,chatgpt.com,gemini.google.com,grok.com"
 MIN_ENHANCE_INTERVAL_MS = "3000"
+RATE_LIMIT_BYPASS_SUBS = "ce64e9f8-b4c3-4693-b2e8-46f228c6d738"
 
 APP_TITLE = "Enhance Prompt"
 RATE_LIMIT_PER_DAY = "100"
 MAX_PROMPT_CHARS = "4000"
 REQUEST_TIMEOUT_MS = "15000"
-DEFAULT_MODEL = "google/gemini-2.0-flash-exp:free"
+DEFAULT_MODEL = "deepseek/deepseek-chat-v3.1:free"
 DEFAULT_MAX_TOKENS = "500"
 DEFAULT_TEMPERATURE = "0.7"

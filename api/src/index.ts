@@ -9,6 +9,8 @@ import type {
 
 export interface Env {
   RATE_LIMITER: DurableObjectNamespace;
+  USAGE_AGGREGATOR: DurableObjectNamespace;
+  RATE_LIMIT_BYPASS_SUBS?: string;
   OPENROUTER_API_KEY: string;
   APP_HTTP_REFERER: string;
   ALLOWED_ORIGINS?: string;
@@ -44,21 +46,40 @@ export class RateLimiter {
   }
 
   async fetch(request: Request): Promise<Response> {
-    const now = Date.now();
-    let { count, timestamp } = (await this.state.storage.get<{
-      count: number;
-      timestamp: number;
-    }>("current_window")) || { count: 0, timestamp: now };
+    const now = new Date();
+    const y = now.getUTCFullYear();
+    const m = now.getUTCMonth();
+    const d = now.getUTCDate();
+    const todayKey = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const resetEpoch = Math.floor(Date.UTC(y, m, d + 1, 0, 0, 0) / 1000);
 
-    if (now - timestamp > this.windowMs) {
-      count = 0;
-      timestamp = now;
+    let bucket = (await this.state.storage.get<{ day: string; count: number }>("day_bucket")) || {
+      day: todayKey,
+      count: 0,
+    };
+    if (bucket.day !== todayKey) {
+      bucket = { day: todayKey, count: 0 };
     }
 
-    const remaining = Math.max(0, this.limit - count);
-    const reset = Math.floor((timestamp + this.windowMs) / 1000);
+    const remaining = Math.max(0, this.limit - bucket.count);
+    const reset = resetEpoch;
 
-    if (count >= this.limit) {
+    const url = new URL(request.url);
+    const isPeek = request.method === "GET" || url.searchParams.get("peek") === "1";
+
+    if (isPeek) {
+      return new Response(
+        JSON.stringify({
+          limit: this.limit,
+          remaining,
+          reset,
+          success: true,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    if (bucket.count >= this.limit) {
       return new Response(
         JSON.stringify({
           limit: this.limit,
@@ -73,11 +94,8 @@ export class RateLimiter {
       );
     }
 
-    const newCount = count + 1;
-    await this.state.storage.put("current_window", {
-      count: newCount,
-      timestamp,
-    });
+    const newCount = bucket.count + 1;
+    await this.state.storage.put("day_bucket", { day: todayKey, count: newCount });
 
     return new Response(
       JSON.stringify({
@@ -88,6 +106,91 @@ export class RateLimiter {
       }),
       { status: 200, headers: { "Content-Type": "application/json" } }
     );
+  }
+}
+
+export class UsageAggregator {
+  state: DurableObjectState;
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    try {
+      const now = new Date();
+      const y = now.getUTCFullYear();
+      const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+      const d = String(now.getUTCDate()).padStart(2, "0");
+      const keysFor = (metric: string) => {
+        const prefix = metric === "tokens" ? "tokens" : "calls";
+        return {
+          dayKey: `${prefix}:daily:${y}-${m}-${d}`,
+          monthKey: `${prefix}:monthly:${y}-${m}`,
+          totalKey: `${prefix}:total`,
+        };
+      };
+
+      if (request.method === "GET") {
+        const kc = keysFor("calls");
+        const kt = keysFor("tokens");
+        const [cd, cm, ct, td, tm, tt] = await Promise.all([
+          this.state.storage.get<number>(kc.dayKey),
+          this.state.storage.get<number>(kc.monthKey),
+          this.state.storage.get<number>(kc.totalKey),
+          this.state.storage.get<number>(kt.dayKey),
+          this.state.storage.get<number>(kt.monthKey),
+          this.state.storage.get<number>(kt.totalKey),
+        ]);
+        return new Response(
+          JSON.stringify({
+            calls: { daily: cd || 0, monthly: cm || 0, total: ct || 0 },
+            tokens: { daily: td || 0, monthly: tm || 0, total: tt || 0 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (request.method === "POST") {
+        let amount = 1;
+        let metric = "calls";
+        try {
+          const body = await request.json();
+          if (body && typeof body.amount === "number" && isFinite(body.amount)) {
+            amount = Math.max(0, Math.floor(body.amount));
+          }
+          if (body && typeof body.metric === "string") {
+            metric = body.metric === "tokens" ? "tokens" : "calls";
+          }
+        } catch {}
+
+        const { dayKey, monthKey, totalKey } = keysFor(metric);
+        const [daily, monthly, total] = await Promise.all([
+          this.state.storage.get<number>(dayKey),
+          this.state.storage.get<number>(monthKey),
+          this.state.storage.get<number>(totalKey),
+        ]);
+
+        const newDaily = (daily || 0) + amount;
+        const newMonthly = (monthly || 0) + amount;
+        const newTotal = (total || 0) + amount;
+
+        await Promise.all([
+          this.state.storage.put(dayKey, newDaily),
+          this.state.storage.put(monthKey, newMonthly),
+          this.state.storage.put(totalKey, newTotal),
+        ]);
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response("Method Not Allowed", { status: 405 });
+    } catch (e) {
+      return new Response("Internal Error", { status: 500 });
+    }
   }
 }
 
@@ -152,7 +255,7 @@ function buildBaseHeaders(
 ): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "OPTIONS, POST",
+    "Access-Control-Allow-Methods": "OPTIONS, GET, POST",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
     "Access-Control-Expose-Headers":
@@ -216,7 +319,7 @@ app.use("*", async (c, next) => {
 
   const incomingOrigin = c.req.header("Origin");
   if (!incomingOrigin) {
-    if (path === "/api/enhance") {
+    if (path === "/api/enhance" || path === "/api/ratelimit" || path === "/api/usage") {
       c.set("corsOrigin", "*");
       if (c.req.method === "OPTIONS") {
         const headers = buildBaseHeaders("*");
@@ -275,7 +378,13 @@ app.use("/api/enhance", async (c, next) => {
   try {
     const id = c.env.RATE_LIMITER.idFromName(`${userToken}:${ip}`);
     const stub = c.env.RATE_LIMITER.get(id);
-    const res = await stub.fetch(c.req.url);
+    const bypass = (c.env.RATE_LIMIT_BYPASS_SUBS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const res = bypass.includes(userToken)
+      ? await stub.fetch(c.req.url + "?peek=1", { method: "GET" })
+      : await stub.fetch(c.req.url, { method: "POST" });
     const rateLimitResult = await res.json<{
       limit: number;
       remaining: number;
@@ -293,6 +402,7 @@ app.use("/api/enhance", async (c, next) => {
     if (!rateLimitResult.success) {
       const errOrigin = (c.get("corsOrigin") as string) || "*";
       const headers = buildBaseHeaders(errOrigin, {
+        "X-Usage-Count": String(RATE_LIMIT_PER_DAY - rateLimitResult.remaining),
         "X-RateLimit-Limit": String(rateLimitResult.limit),
         "X-RateLimit-Remaining": String(rateLimitResult.remaining),
         "X-RateLimit-Reset": String(rateLimitResult.reset),
@@ -318,6 +428,35 @@ app.use("/api/enhance", async (c, next) => {
   await next();
 });
 
+app.use("/api/ratelimit", async (c, next) => {
+  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET });
+  return jwtMiddleware(c, next);
+});
+
+app.get("/api/ratelimit", async (c) => {
+  const origin = (c.get("corsOrigin") as string) || "*";
+  const userToken = (c.get("jwtPayload") as any)?.sub;
+  if (!userToken) return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", origin);
+  const ip = c.req.header("CF-Connecting-IP") || "unknown";
+  try {
+    const id = c.env.RATE_LIMITER.idFromName(`${userToken}:${ip}`);
+    const stub = c.env.RATE_LIMITER.get(id);
+    const res = await stub.fetch(`${c.req.url}?peek=1`, { method: "GET" });
+    const data = await res.json<any>();
+    return c.json(
+      {
+        limit: Number(data?.limit) || parseInt(c.env.RATE_LIMIT_PER_DAY || "100", 10),
+        remaining: Math.max(0, Number(data?.remaining) || 0),
+        reset: Number(data?.reset) || 0,
+      },
+      200,
+      buildBaseHeaders(origin)
+    );
+  } catch (e) {
+    return jsonError(c, 500, "INTERNAL_ERROR", "Failed to read ratelimit", origin);
+  }
+});
+
 app.get("/api/config", (c) => {
   const incomingOrigin = c.req.header("Origin");
   const validated =
@@ -340,6 +479,38 @@ app.get("/api/config", (c) => {
     200,
     buildBaseHeaders(validated)
   );
+});
+
+app.use("/api/usage", async (c, next) => {
+  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET });
+  return jwtMiddleware(c, next);
+});
+
+app.get("/api/usage", async (c) => {
+  const origin = c.get("corsOrigin") as string;
+  const userId = (c.get("jwtPayload") as any)?.sub;
+  if (!userId) return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", origin);
+  try {
+    const aggId = c.env.USAGE_AGGREGATOR.idFromName(String(userId));
+    const agg = c.env.USAGE_AGGREGATOR.get(aggId);
+    const res = await agg.fetch("https://usage/stats", { method: "GET" });
+    const raw: any = await res.json().catch(() => ({}));
+    const payload = {
+      calls: {
+        daily: Number(raw?.calls?.daily) || 0,
+        monthly: Number(raw?.calls?.monthly) || 0,
+        total: Number(raw?.calls?.total) || 0,
+      },
+      tokens: {
+        daily: Number(raw?.tokens?.daily) || 0,
+        monthly: Number(raw?.tokens?.monthly) || 0,
+        total: Number(raw?.tokens?.total) || 0,
+      },
+    };
+    return c.json(payload, 200, buildBaseHeaders(origin));
+  } catch (e) {
+    return jsonError(c, 500, "INTERNAL_ERROR", "Failed to fetch usage", origin);
+  }
 });
 
 app.get("/turnstile", async (c) => {
@@ -650,6 +821,19 @@ app.post("/api/enhance", async (c) => {
       headers.set(key, value);
     }
 
+    // Increment per-user usage counters for cost tracking
+    try {
+      const userId = (c.get("jwtPayload") as any)?.sub;
+      if (userId) {
+        const aggId = c.env.USAGE_AGGREGATOR.idFromName(String(userId));
+        const agg = c.env.USAGE_AGGREGATOR.get(aggId);
+        await agg.fetch("https://usage/incr", {
+          method: "POST",
+          body: JSON.stringify({ amount: 1 }),
+        });
+      }
+    } catch {}
+
     return new Response(response.body, {
       status: response.status,
       headers,
@@ -687,7 +871,13 @@ app.use("/api/enhance/byok", async (c, next) => {
   try {
     const id = c.env.RATE_LIMITER.idFromName(`${userToken}:${ip}`);
     const stub = c.env.RATE_LIMITER.get(id);
-    const res = await stub.fetch(c.req.url);
+    const bypass = (c.env.RATE_LIMIT_BYPASS_SUBS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const res = bypass.includes(userToken)
+      ? await stub.fetch(c.req.url + "?peek=1", { method: "GET" })
+      : await stub.fetch(c.req.url, { method: "POST" });
     const rateLimitResult = await res.json<{
       limit: number;
       remaining: number;
@@ -705,6 +895,7 @@ app.use("/api/enhance/byok", async (c, next) => {
     if (!rateLimitResult.success) {
       const errOrigin = (c.get("corsOrigin") as string) || "*";
       const headers = buildBaseHeaders(errOrigin, {
+        "X-Usage-Count": String(RATE_LIMIT_PER_DAY - rateLimitResult.remaining),
         "X-RateLimit-Limit": String(rateLimitResult.limit),
         "X-RateLimit-Remaining": String(rateLimitResult.remaining),
         "X-RateLimit-Reset": String(rateLimitResult.reset),
@@ -917,6 +1108,19 @@ app.post("/api/enhance/byok", async (c) => {
     for (const [key, value] of Object.entries(buildBaseHeaders(origin))) {
       headers.set(key, value);
     }
+
+    // Increment per-user usage counters for cost tracking
+    try {
+      const userId = (c.get("jwtPayload") as any)?.sub;
+      if (userId) {
+        const aggId = c.env.USAGE_AGGREGATOR.idFromName(String(userId));
+        const agg = c.env.USAGE_AGGREGATOR.get(aggId);
+        await agg.fetch("https://usage/incr", {
+          method: "POST",
+          body: JSON.stringify({ amount: 1 }),
+        });
+      }
+    } catch {}
 
     return new Response(response.body, {
       status: response.status,

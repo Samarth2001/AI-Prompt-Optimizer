@@ -97,11 +97,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function renderUsage(usage) {
-    const limit = (usage && usage.limit) || 100;
-    const remaining = (usage && typeof usage.remaining === 'number') ? usage.remaining : limit;
-    
-    usageText.textContent = `${remaining} / ${limit} remaining`;
-    usageProgress.style.width = `${(remaining / limit) * 100}%`;
+    const limit = (usage && typeof usage.limit === 'number') ? usage.limit : 100;
+    const count = (usage && typeof usage.count === 'number')
+      ? usage.count
+      : Math.max(0, limit - ((usage && typeof usage.remaining === 'number') ? usage.remaining : limit));
+    const used = Math.min(Math.max(count, 0), limit);
+
+    usageText.textContent = `${used} / ${limit} used`;
+    usageProgress.style.width = `${(used / limit) * 100}%`;
   }
 
   chrome.runtime.onMessage.addListener((msg) => {

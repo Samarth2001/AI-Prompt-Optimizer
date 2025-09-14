@@ -7,7 +7,6 @@ const ALLOWED_ACTIONS = new Set([
   "unlockPassphrase",
   "lockPassphrase",
   "ensureValidJwt",
-  "_debugSetRateLimit",  
   "updateRemoteConfig",
   "turnstileToken",
   "turnstileCanceled",
@@ -258,18 +257,35 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     if (request.action === "getUsage") {
       const rateLimitKey = `rate_limit_status`;
-      const usage = await secureStorageService.retrieve(rateLimitKey);
-
-      if (
-        usage &&
-        typeof usage.limit === "number" &&
-        typeof usage.remaining === "number"
-      ) {
-        sendResponse(usage);
-      } else {
-        const limit = await getConfig("RATE_LIMIT_PER_DAY");
-        sendResponse({ limit: limit, remaining: limit, reset: 0 });
+      let stored = await secureStorageService.retrieve(rateLimitKey);
+      if (!stored || typeof stored.limit !== "number") {
+        try {
+          const jwt = await getOrCreateJwt();
+          const res = await fetchWithRetry(
+            "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/api/ratelimit",
+            { headers: { Authorization: `Bearer ${jwt}` } },
+            2,
+            8000,
+            250
+          );
+          if (res && res.ok) {
+            const data = await res.json();
+            const limit = Number(data?.limit) || await getConfig("RATE_LIMIT_PER_DAY");
+            const remaining = Math.max(0, Number(data?.remaining) || 0);
+            const reset = Number(data?.reset) || 0;
+            const count = Math.max(0, limit - remaining);
+            stored = { limit, remaining, reset, count };
+            await secureStorageService.save(rateLimitKey, stored);
+          }
+        } catch (_) {}
       }
+      const limit = typeof stored?.limit === "number" ? stored.limit : await getConfig("RATE_LIMIT_PER_DAY");
+      const count = typeof stored?.count === "number"
+        ? stored.count
+        : Math.max(0, limit - (typeof stored?.remaining === "number" ? stored.remaining : limit));
+      const remaining = Math.max(0, limit - count);
+      const reset = typeof stored?.reset === "number" ? stored.reset : 0;
+      sendResponse({ limit, remaining, reset, count });
       return;
     }
 
@@ -283,28 +299,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return;
     }
 
-    if (request.action === "_debugSetRateLimit") {
-      try {
-        const rateLimitKey = `rate_limit_status`;
-        const limit = await getConfig("RATE_LIMIT_PER_DAY");
-        const usage = (await secureStorageService.retrieve(rateLimitKey)) || {
-          limit: limit,
-          remaining: limit,
-        };
-        const newRemaining = request.remaining;
-
-        if (typeof newRemaining !== "number") {
-          throw new Error("Invalid remaining value for debug set.");
-        }
-
-        usage.remaining = newRemaining;
-        await secureStorageService.save(rateLimitKey, usage);
-        sendResponse({ success: true, usage: usage });
-      } catch (error) {
-        sendResponse({ success: false, error: error.message });
-      }
-      return;
-    }
+    
 
     if (request.action === "unlockPassphrase") {
       try {
