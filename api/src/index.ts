@@ -438,47 +438,91 @@ app.get("/api/ratelimit", async (c) => {
   const userToken = (c.get("jwtPayload") as any)?.sub;
   if (!userToken) return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", origin);
   const ip = c.req.header("CF-Connecting-IP") || "unknown";
+
+  // Edge cache key scoped to user+ip to avoid leaking across users
+  const cacheKey = new Request(
+    `https://cache.local/ratelimit?sub=${encodeURIComponent(String(userToken))}&ip=${encodeURIComponent(
+      String(ip)
+    )}`,
+    { method: "GET" }
+  );
+
   try {
+    const cache = (caches as any).default as Cache;
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const id = c.env.RATE_LIMITER.idFromName(`${userToken}:${ip}`);
     const stub = c.env.RATE_LIMITER.get(id);
     const res = await stub.fetch(`${c.req.url}?peek=1`, { method: "GET" });
     const data = await res.json<any>();
-    return c.json(
-      {
-        limit: Number(data?.limit) || parseInt(c.env.RATE_LIMIT_PER_DAY || "100", 10),
-        remaining: Math.max(0, Number(data?.remaining) || 0),
-        reset: Number(data?.reset) || 0,
-      },
-      200,
-      buildBaseHeaders(origin)
-    );
+
+    const payload = {
+      limit: Number(data?.limit) || parseInt(c.env.RATE_LIMIT_PER_DAY || "100", 10),
+      remaining: Math.max(0, Number(data?.remaining) || 0),
+      reset: Number(data?.reset) || 0,
+    };
+
+    const headers = buildBaseHeaders(origin, {
+      "Content-Type": "application/json",
+      // Short TTL dampens bursts while keeping data fresh
+      "Cache-Control": "public, max-age=15",
+    });
+    const response = new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: new Headers(headers),
+    });
+    await cache.put(cacheKey, response.clone());
+    return response;
   } catch (e) {
     return jsonError(c, 500, "INTERNAL_ERROR", "Failed to read ratelimit", origin);
   }
 });
 
-app.get("/api/config", (c) => {
+app.get("/api/config", async (c) => {
   const incomingOrigin = c.req.header("Origin");
-  const validated =
-    resolveAllowedOrigin(incomingOrigin, c.env) || incomingOrigin || "null";
-  return c.json(
-    {
-      turnstileSiteKey: c.env.TURNSTILE_SITE_KEY,
-      rateLimitPerDay: parseInt(c.env.RATE_LIMIT_PER_DAY || "100", 10),
-      maxPromptChars: parseInt(c.env.MAX_PROMPT_CHARS || "4000", 10),
-      defaultModel: c.env.DEFAULT_MODEL || "google/gemini-2.0-flash-exp:free",
-      allowedHosts: (c.env.ALLOWED_HOSTS || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-      minEnhanceIntervalMs: parseInt(
-        c.env.MIN_ENHANCE_INTERVAL_MS || "3000",
-        10
-      ),
-    },
-    200,
-    buildBaseHeaders(validated)
+  const validated = incomingOrigin
+    ? resolveAllowedOrigin(incomingOrigin, c.env)
+    : null;
+  if (incomingOrigin && !validated) {
+    return jsonError(c, 403, "CORS_ORIGIN_FORBIDDEN", "Origin not allowed", "null");
+  }
+
+  const effectiveOrigin = validated || "null";
+
+  const cacheKey = new Request(
+    `${c.req.url}?o=${encodeURIComponent(effectiveOrigin)}`,
+    { method: "GET" }
   );
+  const cache = (caches as any).default as Cache;
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  const payload = {
+    turnstileSiteKey: c.env.TURNSTILE_SITE_KEY,
+    rateLimitPerDay: parseInt(c.env.RATE_LIMIT_PER_DAY || "100", 10),
+    maxPromptChars: parseInt(c.env.MAX_PROMPT_CHARS || "4000", 10),
+    defaultModel: c.env.DEFAULT_MODEL || "google/gemini-2.0-flash-exp:free",
+    allowedHosts: (c.env.ALLOWED_HOSTS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    minEnhanceIntervalMs: parseInt(c.env.MIN_ENHANCE_INTERVAL_MS || "3000", 10),
+  };
+
+  const headers = buildBaseHeaders(effectiveOrigin, {
+    "Content-Type": "application/json",
+    "Cache-Control": "public, max-age=43200",
+    Vary: "Origin",
+  });
+  const response = new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: new Headers(headers),
+  });
+  await cache.put(cacheKey, response.clone());
+  return response;
 });
 
 app.use("/api/usage", async (c, next) => {

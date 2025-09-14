@@ -32,7 +32,7 @@
       body {
         width: 360px;
         min-width: 360px;
-        min-height: 420px;
+        min-height: 380px;
         background-color: var(--bg);
         background-image: radial-gradient(
           1200px 600px at 10% -10%,
@@ -42,7 +42,7 @@
         color: var(--text);
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto,
           "Helvetica Neue", Arial, sans-serif;
-        font-size: 12.5px;
+        font-size: 13px;
         line-height: 1.5;
         padding: 12px;
         border: 1px solid var(--border);
@@ -62,7 +62,7 @@
       }
 
       .header h1 {
-        font-size: 14px;
+        font-size: 15px;
         font-weight: 600;
         color: #fafafa;
         margin-bottom: 0px;
@@ -70,7 +70,7 @@
       }
 
       .header p {
-        font-size: 11px;
+        font-size: 12px;
         color: var(--muted);
         font-weight: 400;
       }
@@ -105,7 +105,7 @@
         color: var(--muted);
       }
       .mode-badge {
-        font-size: 11px;
+        font-size: 12px;
         color: #a1a1aa;
       }
       .mt8 {
@@ -248,12 +248,12 @@
       }
 
       .btn-secondary {
-        height: 30px;
-        padding: 0 10px;
+        height: 32px;
+        padding: 0 12px;
         background: var(--surface-2);
         color: var(--muted);
         border: 1px solid var(--border);
-        font-size: 11px;
+        font-size: 12px;
       }
       .ml-auto {
         margin-left: auto;
@@ -491,7 +491,7 @@
       }
 
       .usage-text {
-        font-size: 11px;
+        font-size: 12px;
         color: var(--muted);
       }
 
@@ -603,11 +603,42 @@
         border-radius: 6px;
         font-size: 11px;
       }
+
+      .byok-help { display: none; }
+      body[data-mode="byok"] .byok-help { display: block; }
+
+      details.disclosure {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      details.disclosure > summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 10px 12px;
+        color: #e5e7eb;
+        font-size: 12px;
+        font-weight: 500;
+      }
+      details.disclosure[open] > summary {
+        border-bottom: 1px solid var(--border);
+      }
+      details.disclosure > .help-steps {
+        padding: 10px 12px 12px;
+      }
+      details.disclosure summary::-webkit-details-marker { display: none; }
+      details.disclosure summary::after {
+        content: "▾";
+        float: right;
+        color: var(--muted);
+        transition: transform .2s ease;
+      }
+      details.disclosure[open] summary::after { transform: rotate(180deg); }
     </style>
   </head>
   <body>
     <div class="header">
-      <h1>✨ Prompt Enhancer</h1>
+      <h1>Prompt Enhancer</h1>
       <p>AI-powered prompt optimization</p>
     </div>
 
@@ -695,27 +726,15 @@
       <div id="status-message" class="status"></div>
     </div>
 
-    <div class="help-section">
-      <h3 class="help-title">How it Works</h3>
-      <ol class="help-steps">
-        <li class="help-step">
-          By default, enjoy 100 free enhancements per day.
-        </li>
-        <li class="help-step">
-          For unlimited use, toggle on "Use your own API key" and add your
-          <a
-            href="https://openrouter.ai/"
-            target="_blank"
-            rel="noopener"
-            class="help-link"
-            >OpenRouter</a
-          >
-          key.
-        </li>
-        <li class="help-step">
-          Find the ✨ button on supported sites to enhance your prompts.
-        </li>
-      </ol>
+    <div class="help-section byok-help">
+      <details class="disclosure">
+        <summary>BYOK setup</summary>
+        <ol class="help-steps">
+          <li class="help-step">Add a name, your OpenRouter key, and a passphrase. Save.</li>
+          <li class="help-step">Select the key, enter your passphrase, then Unlock.</li>
+          <li class="help-step">Lock or Detach anytime from the actions above.</li>
+        </ol>
+      </details>
     </div>
 
     <div class="api-actions">
