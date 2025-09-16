@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { jwt, sign, verify, decode } from "hono/jwt";
+import { sign, verify } from "hono/jwt";
 import type {
   KVNamespace,
   DurableObjectNamespace,
@@ -266,6 +266,54 @@ function buildBaseHeaders(
   };
 }
 
+function logJSON(entry: Record<string, unknown>) {
+  try {
+    console.log(JSON.stringify(entry));
+  } catch {}
+}
+
+function logAuthFailed(c: any, reason: string) {
+  logJSON({ event: "auth_failed", route: c.req.path, reason, ts: Date.now() });
+}
+
+function logRateLimitExceeded(
+  c: any,
+  sub: string,
+  limit: number,
+  reset: number
+) {
+  logJSON({
+    event: "rate_limit_exceeded",
+    route: c.req.path,
+    sub,
+    limit,
+    reset,
+    ts: Date.now(),
+  });
+}
+
+function logServerError(c: any, code: string) {
+  logJSON({ event: "server_error", route: c.req.path, code, ts: Date.now() });
+}
+
+async function authMiddleware(c: any, next: () => Promise<void>) {
+  const origin = (c.get("corsOrigin") as string) || "*";
+  const auth = c.req.header("Authorization") || "";
+  if (!auth.startsWith("Bearer ")) {
+    logAuthFailed(c, "missing_token");
+    return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", origin);
+  }
+  const token = auth.slice(7).trim();
+  try {
+    const payload = await verify(token, c.env.JWT_SECRET);
+    c.set("jwtPayload", payload as any);
+  } catch {
+    logAuthFailed(c, "invalid_token");
+    return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", origin);
+  }
+  await next();
+}
+
 function jsonError(
   c: any,
   status: number,
@@ -276,6 +324,7 @@ function jsonError(
 ) {
   const payload: Record<string, unknown> = { code, message };
   if (details !== undefined) payload.details = details;
+  if (status >= 500) logServerError(c, code);
   return c.json(payload, status, buildBaseHeaders(origin));
 }
 
@@ -360,15 +409,13 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-app.use("/api/enhance", async (c, next) => {
-  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET });
-  return jwtMiddleware(c, next);
-});
+app.use("/api/enhance", authMiddleware);
 
 app.use("/api/enhance", async (c, next) => {
   const userToken = c.get("jwtPayload").sub;
   if (!userToken) {
     const errOrigin = c.get("corsOrigin") as string;
+    logAuthFailed(c, "missing_sub");
     return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", errOrigin);
   }
 
@@ -407,6 +454,7 @@ app.use("/api/enhance", async (c, next) => {
         "X-RateLimit-Remaining": String(rateLimitResult.remaining),
         "X-RateLimit-Reset": String(rateLimitResult.reset),
       });
+      logRateLimitExceeded(c, userToken, rateLimitResult.limit, rateLimitResult.reset);
       return c.json(
         { code: "RATE_LIMIT_EXCEEDED", message: "Rate limit exceeded" },
         429,
@@ -428,15 +476,15 @@ app.use("/api/enhance", async (c, next) => {
   await next();
 });
 
-app.use("/api/ratelimit", async (c, next) => {
-  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET });
-  return jwtMiddleware(c, next);
-});
+app.use("/api/ratelimit", authMiddleware);
 
 app.get("/api/ratelimit", async (c) => {
   const origin = (c.get("corsOrigin") as string) || "*";
   const userToken = (c.get("jwtPayload") as any)?.sub;
-  if (!userToken) return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", origin);
+  if (!userToken) {
+    logAuthFailed(c, "missing_sub");
+    return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", origin);
+  }
   const ip = c.req.header("CF-Connecting-IP") || "unknown";
 
   // Edge cache key scoped to user+ip to avoid leaking across users
@@ -525,15 +573,15 @@ app.get("/api/config", async (c) => {
   return response;
 });
 
-app.use("/api/usage", async (c, next) => {
-  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET });
-  return jwtMiddleware(c, next);
-});
+app.use("/api/usage", authMiddleware);
 
 app.get("/api/usage", async (c) => {
   const origin = c.get("corsOrigin") as string;
   const userId = (c.get("jwtPayload") as any)?.sub;
-  if (!userId) return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", origin);
+  if (!userId) {
+    logAuthFailed(c, "missing_sub");
+    return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", origin);
+  }
   try {
     const aggId = c.env.USAGE_AGGREGATOR.idFromName(String(userId));
     const agg = c.env.USAGE_AGGREGATOR.get(aggId);
@@ -662,6 +710,7 @@ app.post("/api/token", async (c) => {
   } catch (e: any) {
     const origin = c.get("corsOrigin") || "*";
     console.error("/api/token error:", e?.message || e);
+    logServerError(c, "INTERNAL_ERROR");
     return c.json(
       { code: "INTERNAL_ERROR", message: "Failed to issue token", details: e?.message || String(e) },
       500,
@@ -845,6 +894,12 @@ app.post("/api/enhance", async (c) => {
         "X-RateLimit-Remaining": String(rate.remaining),
         "X-RateLimit-Reset": String(rate.reset),
       });
+      if (response.status >= 500) {
+        logServerError(c, "UPSTREAM_ERROR");
+      }
+      if (response.status >= 500) {
+        logServerError(c, "UPSTREAM_ERROR");
+      }
       return new Response(
         JSON.stringify({
           code: "UPSTREAM_ERROR",
@@ -883,6 +938,7 @@ app.post("/api/enhance", async (c) => {
       headers,
     });
   } catch (e: any) {
+    logServerError(c, "INTERNAL_ERROR");
     return c.json(
       {
         code: "INTERNAL_ERROR",
@@ -897,15 +953,13 @@ app.post("/api/enhance", async (c) => {
 
 // BYOK variant: user provides an OpenRouter API key per request via header.
 // System prompt is injected server-side to avoid exposing it in client code.
-app.use("/api/enhance/byok", async (c, next) => {
-  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET });
-  return jwtMiddleware(c, next);
-});
+app.use("/api/enhance/byok", authMiddleware);
 
 app.use("/api/enhance/byok", async (c, next) => {
   const userToken = (c.get("jwtPayload") as any)?.sub;
   if (!userToken) {
     const errOrigin = c.get("corsOrigin") as string;
+    logAuthFailed(c, "missing_sub");
     return jsonError(c, 401, "UNAUTHORIZED", "Invalid token", errOrigin);
   }
 
@@ -944,6 +998,7 @@ app.use("/api/enhance/byok", async (c, next) => {
         "X-RateLimit-Remaining": String(rateLimitResult.remaining),
         "X-RateLimit-Reset": String(rateLimitResult.reset),
       });
+      logRateLimitExceeded(c, userToken, rateLimitResult.limit, rateLimitResult.reset);
       return c.json(
         { code: "RATE_LIMIT_EXCEEDED", message: "Rate limit exceeded" },
         429,
@@ -1171,6 +1226,7 @@ app.post("/api/enhance/byok", async (c) => {
       headers,
     });
   } catch (e: any) {
+    logServerError(c, "INTERNAL_ERROR");
     return c.json(
       {
         code: "INTERNAL_ERROR",
