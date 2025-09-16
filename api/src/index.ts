@@ -10,6 +10,7 @@ import type {
 export interface Env {
   RATE_LIMITER: DurableObjectNamespace;
   USAGE_AGGREGATOR: DurableObjectNamespace;
+  TOKEN_GATE: DurableObjectNamespace;
   RATE_LIMIT_BYPASS_SUBS?: string;
   OPENROUTER_API_KEY: string;
   APP_HTTP_REFERER: string;
@@ -27,6 +28,9 @@ export interface Env {
   JWT_SECRET: string;
   TURNSTILE_SECRET_KEY: string;
   TURNSTILE_SITE_KEY: string;
+  TOKEN_IP_LIMIT_PER_MIN?: string;
+  TOKEN_IP_BACKOFF_INITIAL_SEC?: string;
+  TOKEN_IP_BACKOFF_MAX_SEC?: string;
 }
 
 export class RateLimiter {
@@ -102,6 +106,89 @@ export class RateLimiter {
         limit: this.limit,
         remaining: this.limit - newCount,
         reset,
+        success: true,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
+}
+
+export class TokenGate {
+  state: DurableObjectState;
+  limitPerMin: number;
+  initialBackoffSec: number;
+  maxBackoffSec: number;
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.limitPerMin = parseInt(env.TOKEN_IP_LIMIT_PER_MIN || "5", 10);
+    this.initialBackoffSec = parseInt(env.TOKEN_IP_BACKOFF_INITIAL_SEC || "60", 10);
+    this.maxBackoffSec = parseInt(env.TOKEN_IP_BACKOFF_MAX_SEC || "900", 10);
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const nowMs = Date.now();
+    const nowEpoch = Math.floor(nowMs / 1000);
+    const minuteKey = Math.floor(nowMs / 60000);
+    const resetEpoch = (minuteKey + 1) * 60;
+
+    type GateState = { minute: number; count: number; backoffSec: number; penaltyUntil: number };
+    const current: GateState =
+      (await this.state.storage.get<GateState>("gate")) ||
+      { minute: minuteKey, count: 0, backoffSec: 0, penaltyUntil: 0 };
+
+    if (current.minute !== minuteKey) {
+      current.minute = minuteKey;
+      current.count = 0;
+    }
+
+    if (current.penaltyUntil && nowEpoch < current.penaltyUntil) {
+      const retryAfter = current.penaltyUntil - nowEpoch;
+      return new Response(
+        JSON.stringify({
+          limit: this.limitPerMin,
+          remaining: Math.max(0, this.limitPerMin - current.count),
+          reset: resetEpoch,
+          success: false,
+          retryAfter,
+        }),
+        { status: 429, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    const url = new URL(request.url);
+    const isPeek = request.method === "GET" || url.searchParams.get("peek") === "1";
+
+    if (!isPeek && current.count >= this.limitPerMin) {
+      const nextBackoff = Math.min(
+        this.maxBackoffSec,
+        current.backoffSec > 0 ? current.backoffSec * 2 : this.initialBackoffSec
+      );
+      current.backoffSec = nextBackoff;
+      current.penaltyUntil = nowEpoch + nextBackoff;
+      await this.state.storage.put("gate", current);
+      return new Response(
+        JSON.stringify({
+          limit: this.limitPerMin,
+          remaining: 0,
+          reset: resetEpoch,
+          success: false,
+          retryAfter: nextBackoff,
+        }),
+        { status: 429, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!isPeek) {
+      current.count += 1;
+      await this.state.storage.put("gate", current);
+    }
+
+    return new Response(
+      JSON.stringify({
+        limit: this.limitPerMin,
+        remaining: Math.max(0, this.limitPerMin - current.count),
+        reset: resetEpoch,
         success: true,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } }
@@ -552,7 +639,7 @@ app.get("/api/config", async (c) => {
     turnstileSiteKey: c.env.TURNSTILE_SITE_KEY,
     rateLimitPerDay: parseInt(c.env.RATE_LIMIT_PER_DAY || "100", 10),
     maxPromptChars: parseInt(c.env.MAX_PROMPT_CHARS || "4000", 10),
-    defaultModel: c.env.DEFAULT_MODEL || "google/gemini-2.0-flash-exp:free",
+    defaultModel: c.env.DEFAULT_MODEL || "deepseek/deepseek-chat-v3.1:free",
     allowedHosts: (c.env.ALLOWED_HOSTS || "")
       .split(",")
       .map((s) => s.trim())
@@ -638,6 +725,37 @@ app.post("/api/token", async (c) => {
   const origin =
     resolveAllowedOrigin(incomingOrigin, c.env) || incomingOrigin || "*";
   try {
+    const ip = c.req.header("CF-Connecting-IP") || "unknown";
+    try {
+      const gateId = c.env.TOKEN_GATE.idFromName(ip);
+      const gate = c.env.TOKEN_GATE.get(gateId);
+      const res = await gate.fetch(c.req.url, { method: "POST" });
+      const tokenGate = await res.json<{
+        limit: number;
+        remaining: number;
+        reset: number;
+        success: boolean;
+        retryAfter?: number;
+      }>();
+      if (!tokenGate.success) {
+        const headers = buildBaseHeaders(origin, {
+          "X-RateLimit-Limit": String(tokenGate.limit),
+          "X-RateLimit-Remaining": String(Math.max(0, tokenGate.remaining)),
+          "X-RateLimit-Reset": String(tokenGate.reset),
+        });
+        if (typeof tokenGate.retryAfter === "number") {
+          (headers as any)["Retry-After"] = String(Math.max(0, tokenGate.retryAfter));
+        }
+        return c.json(
+          { code: "RATE_LIMIT_EXCEEDED", message: "Rate limit exceeded" },
+          429,
+          headers
+        );
+      }
+    } catch (e) {
+      return jsonError(c, 500, "INTERNAL_ERROR", "Token gate failed", origin);
+    }
+
     const body = await c.req.json();
     const turnstileToken = body.turnstileToken;
 
@@ -663,11 +781,10 @@ app.post("/api/token", async (c) => {
       );
     }
 
-    const ip = c.req.header("CF-Connecting-IP") || "";
     const params = new URLSearchParams();
     params.set("secret", secret);
     params.set("response", turnstileToken);
-    if (ip) params.set("remoteip", ip);
+    if (ip && ip !== "unknown") params.set("remoteip", ip);
 
     const response = await fetch(
       "https://challenges.cloudflare.com/turnstile/v0/siteverify",
@@ -735,7 +852,7 @@ app.post("/api/enhance", async (c) => {
 
     const MAX_PROMPT_CHARS = parseInt(c.env.MAX_PROMPT_CHARS || "4000", 10);
     const DEFAULT_MODEL =
-      c.env.DEFAULT_MODEL || "google/gemini-2.0-flash-exp:free";
+      c.env.DEFAULT_MODEL || "deepseek/deepseek-chat-v3.1:free";
     const DEFAULT_MAX_TOKENS = parseInt(c.env.DEFAULT_MAX_TOKENS || "500", 10);
     const DEFAULT_TEMPERATURE = parseFloat(c.env.DEFAULT_TEMPERATURE || "0.7");
 
@@ -1036,7 +1153,7 @@ app.post("/api/enhance/byok", async (c) => {
 
     const MAX_PROMPT_CHARS = parseInt(c.env.MAX_PROMPT_CHARS || "4000", 10);
     const DEFAULT_MODEL =
-      c.env.DEFAULT_MODEL || "google/gemini-2.0-flash-exp:free";
+      c.env.DEFAULT_MODEL || "deepseek/deepseek-chat-v3.1:free";
     const DEFAULT_MAX_TOKENS = parseInt(c.env.DEFAULT_MAX_TOKENS || "500", 10);
     const DEFAULT_TEMPERATURE = parseFloat(c.env.DEFAULT_TEMPERATURE || "0.7");
 

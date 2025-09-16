@@ -15,7 +15,7 @@ const ALLOWED_ACTIONS = new Set([
 const DEFAULTS = {
   MIN_ENHANCE_INTERVAL_MS: 3000,
   MAX_PROMPT_CHARS: 4000,
-  DEFAULT_MODEL: "google/gemini-2.0-flash-exp:free",
+  DEFAULT_MODEL: "deepseek/deepseek-chat-v3.1:free",
   ALLOWED_HOSTS: [
     "claude.ai",
     "chat.openai.com",
@@ -33,7 +33,22 @@ let ALLOWED_HOSTS_CACHE = DEFAULTS.ALLOWED_HOSTS.slice();
 
 async function getConfig(key) {
   const config = await secureStorageService.retrieve("remote_config");
-  return config?.[key] ?? DEFAULTS[key];
+  if (!config || typeof config !== "object") return DEFAULTS[key];
+  if (Object.prototype.hasOwnProperty.call(config, key)) return config[key];
+  const mapped =
+    key === "MIN_ENHANCE_INTERVAL_MS"
+      ? "minEnhanceIntervalMs"
+      : key === "MAX_PROMPT_CHARS"
+      ? "maxPromptChars"
+      : key === "RATE_LIMIT_PER_DAY"
+      ? "rateLimitPerDay"
+      : key === "DEFAULT_MODEL"
+      ? "defaultModel"
+      : key === "ALLOWED_HOSTS"
+      ? "allowedHosts"
+      : null;
+  if (mapped && Object.prototype.hasOwnProperty.call(config, mapped)) return config[mapped];
+  return DEFAULTS[key];
 }
 
 function isTrustedSender(sender) {
@@ -368,18 +383,18 @@ async function updateRemoteConfig() {
     const config = await response.json();
 
     const newConfig = {
-      rateLimitPerDay:
+      RATE_LIMIT_PER_DAY:
         config.rateLimitPerDay ?? DEFAULTS.RATE_LIMIT_PER_DAY,
-      maxPromptChars: config.maxPromptChars ?? DEFAULTS.MAX_PROMPT_CHARS,
-      defaultModel: config.defaultModel ?? DEFAULTS.DEFAULT_MODEL,
-      allowedHosts: config.allowedHosts ?? DEFAULTS.ALLOWED_HOSTS,
-      minEnhanceIntervalMs:
+      MAX_PROMPT_CHARS: config.maxPromptChars ?? DEFAULTS.MAX_PROMPT_CHARS,
+      DEFAULT_MODEL: config.defaultModel ?? DEFAULTS.DEFAULT_MODEL,
+      ALLOWED_HOSTS: config.allowedHosts ?? DEFAULTS.ALLOWED_HOSTS,
+      MIN_ENHANCE_INTERVAL_MS:
         config.minEnhanceIntervalMs ?? DEFAULTS.MIN_ENHANCE_INTERVAL_MS,
     };
 
     await secureStorageService.save("remote_config", newConfig);
-    if (Array.isArray(newConfig.allowedHosts) && newConfig.allowedHosts.length) {
-      ALLOWED_HOSTS_CACHE = newConfig.allowedHosts.slice();
+    if (Array.isArray(newConfig.ALLOWED_HOSTS) && newConfig.ALLOWED_HOSTS.length) {
+      ALLOWED_HOSTS_CACHE = newConfig.ALLOWED_HOSTS.slice();
     }
   } catch (error) {
     console.error("Could not update remote configuration:", error);
@@ -387,11 +402,11 @@ async function updateRemoteConfig() {
     const currentConfig = await secureStorageService.retrieve("remote_config");
     if (!currentConfig) {
       await secureStorageService.save("remote_config", {
-        rateLimitPerDay: DEFAULTS.RATE_LIMIT_PER_DAY,
-        maxPromptChars: DEFAULTS.MAX_PROMPT_CHARS,
-        defaultModel: DEFAULTS.DEFAULT_MODEL,
-        allowedHosts: DEFAULTS.ALLOWED_HOSTS,
-        minEnhanceIntervalMs: DEFAULTS.MIN_ENHANCE_INTERVAL_MS,
+        RATE_LIMIT_PER_DAY: DEFAULTS.RATE_LIMIT_PER_DAY,
+        MAX_PROMPT_CHARS: DEFAULTS.MAX_PROMPT_CHARS,
+        DEFAULT_MODEL: DEFAULTS.DEFAULT_MODEL,
+        ALLOWED_HOSTS: DEFAULTS.ALLOWED_HOSTS,
+        MIN_ENHANCE_INTERVAL_MS: DEFAULTS.MIN_ENHANCE_INTERVAL_MS,
       });
       ALLOWED_HOSTS_CACHE = DEFAULTS.ALLOWED_HOSTS.slice();
     }
