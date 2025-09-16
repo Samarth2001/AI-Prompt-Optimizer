@@ -32,7 +32,9 @@
         "*://gemini.google.com/*",
         "*://*.gemini.google.com/*",
         "*://grok.com/*",
-        "*://*.grok.com/*"
+        "*://*.grok.com/*",
+        "*://perplexity.ai/*",
+        "*://*.perplexity.ai/*"
       ],
       "js": [
         "content.js"
@@ -55,7 +57,9 @@
         "*://gemini.google.com/*",
         "*://*.gemini.google.com/*",
         "*://grok.com/*",
-        "*://*.grok.com/*"
+        "*://*.grok.com/*",
+        "*://perplexity.ai/*",
+        "*://*.perplexity.ai/*"
       ]
     }
   ],

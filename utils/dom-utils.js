@@ -43,8 +43,15 @@ export function findTextInputs(selectors) {
     }
   });
 
-  // If no inputs found with specific selectors, try generic fallbacks for Claude and Grok
-  if (inputs.length === 0 && (window.location.hostname.includes('claude.ai') || window.location.hostname.includes('grok.com'))) {
+  // If no inputs found with specific selectors, try generic fallbacks for Claude, Grok, and Perplexity
+  if (
+    inputs.length === 0 &&
+    (
+      window.location.hostname.includes('claude.ai') ||
+      window.location.hostname.includes('grok.com') ||
+      window.location.hostname.includes('perplexity.ai')
+    )
+  ) {
     const fallbackSelectors = [
       'textarea',
       'div[contenteditable="true"]',
