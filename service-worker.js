@@ -7,22 +7,49 @@ const ALLOWED_ACTIONS = new Set([
   "unlockPassphrase",
   "lockPassphrase",
   "ensureValidJwt",
-  "_debugSetRateLimit",  
   "updateRemoteConfig",
+  "turnstileToken",
+  "turnstileCanceled",
 ]);
-const MIN_ENHANCE_INTERVAL_MS = 3000; // 1 req / 3s
+
+const DEFAULTS = {
+  MIN_ENHANCE_INTERVAL_MS: 3000,
+  MAX_PROMPT_CHARS: 4000,
+  DEFAULT_MODEL: "deepseek/deepseek-chat-v3.1:free",
+  ALLOWED_HOSTS: [
+    "claude.ai",
+    "chat.openai.com",
+    "chatgpt.com",
+    "gemini.google.com",
+    "grok.com",
+  ],
+  RATE_LIMIT_PER_DAY: 100,
+};
+
 let lastEnhanceAt = 0;
-const MAX_PROMPT_CHARS = 4000;
-const DEFAULT_MODEL = "google/gemini-2.0-flash-exp:free";
 const APP_X_TITLE = "Enhance Prompt";
 
-const ALLOWED_HOSTS = [
-  "claude.ai",
-  "chat.openai.com",
-  "chatgpt.com",
-  "gemini.google.com",
-  "grok.com",
-];
+let ALLOWED_HOSTS_CACHE = DEFAULTS.ALLOWED_HOSTS.slice();
+
+async function getConfig(key) {
+  const config = await secureStorageService.retrieve("remote_config");
+  if (!config || typeof config !== "object") return DEFAULTS[key];
+  if (Object.prototype.hasOwnProperty.call(config, key)) return config[key];
+  const mapped =
+    key === "MIN_ENHANCE_INTERVAL_MS"
+      ? "minEnhanceIntervalMs"
+      : key === "MAX_PROMPT_CHARS"
+      ? "maxPromptChars"
+      : key === "RATE_LIMIT_PER_DAY"
+      ? "rateLimitPerDay"
+      : key === "DEFAULT_MODEL"
+      ? "defaultModel"
+      : key === "ALLOWED_HOSTS"
+      ? "allowedHosts"
+      : null;
+  if (mapped && Object.prototype.hasOwnProperty.call(config, mapped)) return config[mapped];
+  return DEFAULTS[key];
+}
 
 function isTrustedSender(sender) {
   try {
@@ -34,7 +61,7 @@ function isTrustedSender(sender) {
     if (!urlString) return false;
     const url = new URL(urlString);
     const host = url.hostname || "";
-    return ALLOWED_HOSTS.some(
+    return ALLOWED_HOSTS_CACHE.some(
       (suffix) => host === suffix || host.endsWith(`.${suffix}`)
     );
   } catch (_) {
@@ -89,7 +116,8 @@ async function fetchWithRetry(
 }
 
 async function ensureValidJwt() {
-  let token = await secureStorageService.retrieve("jwt");
+  const sessionData = await chrome.storage.session.get("jwt");
+  let token = sessionData && sessionData.jwt;
   if (token) {
     const payload = decodeJwt(token);
     if (payload && payload.exp * 1000 > Date.now() + 60 * 1000) {
@@ -98,7 +126,6 @@ async function ensureValidJwt() {
   }
 
   const redirectUrl = await chrome.identity.getRedirectURL();
-
   const authUrl = `https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/turnstile?redirect_uri=${encodeURIComponent(
     redirectUrl
   )}`;
@@ -131,9 +158,11 @@ async function ensureValidJwt() {
     throw new Error("Failed to exchange Turnstile token for JWT");
 
   const data = await response.json();
-  await secureStorageService.save("jwt", data.token);
+  await chrome.storage.session.set({ jwt: data.token });
   return data.token;
 }
+
+// Overlay-based token retrieval removed to comply with least-privilege requirements.
 
 function decodeJwt(token) {
   try {
@@ -146,7 +175,8 @@ function decodeJwt(token) {
 }
 
 async function getOrCreateJwt() {
-  let token = await secureStorageService.retrieve("jwt");
+  const sessionData = await chrome.storage.session.get("jwt");
+  let token = sessionData && sessionData.jwt;
   const payload = token ? decodeJwt(token) : null;
 
   if (!payload || payload.exp * 1000 < Date.now() + 60 * 1000) {
@@ -169,92 +199,78 @@ async function getOrCreateJwt() {
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (!isTrustedSender(sender)) {
-    sendResponse({ success: false, error: "Unauthorized sender" });
-    return false;
-  }
+  (async () => {
+    if (!(await isTrustedSender(sender))) {
+      sendResponse({ success: false, error: "Unauthorized sender" });
+      return;
+    }
 
-  if (
-    !request ||
-    typeof request.action !== "string" ||
-    !ALLOWED_ACTIONS.has(request.action)
-  ) {
-    sendResponse({ success: false, error: "Action not allowed" });
-    return false;
-  }
+    if (
+      !request ||
+      typeof request.action !== "string" ||
+      !ALLOWED_ACTIONS.has(request.action)
+    ) {
+      sendResponse({ success: false, error: "Action not allowed" });
+      return;
+    }
 
-  if (request.action === "ensureValidJwt") {
-    (async () => {
+    if (request.action === "ensureValidJwt") {
       try {
         await ensureValidJwt();
         sendResponse({ success: true });
       } catch (error) {
         sendResponse({ success: false, error: error.message });
       }
-    })();
-    return true;
-  }
+      return;
+    }
 
-  if (request.action === "getUsage") {
-    (async () => {
+    if (request.action === "getUsage") {
       const rateLimitKey = `rate_limit_status`;
-      const usage = await secureStorageService.retrieve(rateLimitKey);
-
-      if (
-        usage &&
-        typeof usage.limit === "number" &&
-        typeof usage.remaining === "number"
-      ) {
-        sendResponse(usage);
-      } else {
-        const config = await secureStorageService.retrieve("remote_config");
-        const limit = (config && config.rateLimitPerDay) || 100; 
-        sendResponse({ limit: limit, remaining: limit, reset: 0 });
+      let stored = await secureStorageService.retrieve(rateLimitKey);
+      if (!stored || typeof stored.limit !== "number") {
+        try {
+          const jwt = await getOrCreateJwt();
+          const res = await fetchWithRetry(
+            "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/api/ratelimit",
+            { headers: { Authorization: `Bearer ${jwt}` } },
+            2,
+            8000,
+            250
+          );
+          if (res && res.ok) {
+            const data = await res.json();
+            const limit = Number(data?.limit) || await getConfig("RATE_LIMIT_PER_DAY");
+            const remaining = Math.max(0, Number(data?.remaining) || 0);
+            const reset = Number(data?.reset) || 0;
+            const count = Math.max(0, limit - remaining);
+            stored = { limit, remaining, reset, count };
+            await secureStorageService.save(rateLimitKey, stored);
+          }
+        } catch (_) {}
       }
-    })();
-    return true;
-  }
+      const limit = typeof stored?.limit === "number" ? stored.limit : await getConfig("RATE_LIMIT_PER_DAY");
+      const count = typeof stored?.count === "number"
+        ? stored.count
+        : Math.max(0, limit - (typeof stored?.remaining === "number" ? stored.remaining : limit));
+      const remaining = Math.max(0, limit - count);
+      const reset = typeof stored?.reset === "number" ? stored.reset : 0;
+      sendResponse({ limit, remaining, reset, count });
+      return;
+    }
 
-  if (request.action === "updateRemoteConfig") {
-    (async () => {
+    if (request.action === "updateRemoteConfig") {
       try {
         await updateRemoteConfig();
         sendResponse({ success: true });
       } catch (error) {
         sendResponse({ success: false, error: error.message });
       }
-    })();
-    return true;
-  }
+      return;
+    }
 
-   if (request.action === "_debugSetRateLimit") {
-    (async () => {
-      try {
-        const rateLimitKey = `rate_limit_status`;
-        const config = await secureStorageService.retrieve("remote_config");
-        const limit = (config && config.rateLimitPerDay) || 100;
-        const usage = (await secureStorageService.retrieve(rateLimitKey)) || {
-          limit: limit,
-          remaining: limit,
-        };
-        const newRemaining = request.remaining;
+    
 
-        if (typeof newRemaining !== "number") {
-          throw new Error("Invalid remaining value for debug set.");
-        }
-
-        usage.remaining = newRemaining;
-        await secureStorageService.save(rateLimitKey, usage);
-        sendResponse({ success: true, usage: usage });
-      } catch (error) {
-        sendResponse({ success: false, error: error.message });
-      }
-    })();
-    return true;
-  }
-
-  if (request.action === "unlockPassphrase") {
-    (async () => {
+    if (request.action === "unlockPassphrase") {
       try {
         const pass = (request && request.passphrase) || "";
         if (!pass || typeof pass !== "string") {
@@ -265,26 +281,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       } catch (error) {
         sendResponse({ success: false, error: error.message });
       }
-    })();
-    return true;
-  }
-
-  if (request.action === "lockPassphrase") {
-    try {
-      secureStorageService.disablePassphraseMode();
-      sendResponse({ success: true });
-    } catch (error) {
-      sendResponse({ success: false, error: error.message });
+      return;
     }
-    return false;
-  }
 
-  if (request.action === "enhancePrompt") {
-    (async () => {
+    if (request.action === "lockPassphrase") {
+      try {
+        secureStorageService.disablePassphraseMode();
+        sendResponse({ success: true });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
+      return;
+    }
+
+    if (request.action === "enhancePrompt") {
       const now = Date.now();
       const elapsed = now - lastEnhanceAt;
-      if (elapsed < MIN_ENHANCE_INTERVAL_MS) {
-        const waitMs = MIN_ENHANCE_INTERVAL_MS - elapsed;
+      const minInterval = await getConfig("MIN_ENHANCE_INTERVAL_MS");
+      if (elapsed < minInterval) {
+        const waitMs = minInterval - elapsed;
         const waitSec = Math.ceil(waitMs / 1000);
         sendResponse({
           success: false,
@@ -300,9 +315,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       } else {
         await handleProxyRequest(request, sendResponse);
       }
-    })();
-    return true;
-  }
+    }
+  })();
+  return true;
 });
 
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -320,13 +335,35 @@ async function updateRemoteConfig() {
       throw new Error(`Failed to fetch remote config: ${response.status}`);
     }
     const config = await response.json();
-    if (config && typeof config.rateLimitPerDay === "number") {
-      await secureStorageService.save("remote_config", {
-        rateLimitPerDay: config.rateLimitPerDay,
-      });
+
+    const newConfig = {
+      RATE_LIMIT_PER_DAY:
+        config.rateLimitPerDay ?? DEFAULTS.RATE_LIMIT_PER_DAY,
+      MAX_PROMPT_CHARS: config.maxPromptChars ?? DEFAULTS.MAX_PROMPT_CHARS,
+      DEFAULT_MODEL: config.defaultModel ?? DEFAULTS.DEFAULT_MODEL,
+      ALLOWED_HOSTS: config.allowedHosts ?? DEFAULTS.ALLOWED_HOSTS,
+      MIN_ENHANCE_INTERVAL_MS:
+        config.minEnhanceIntervalMs ?? DEFAULTS.MIN_ENHANCE_INTERVAL_MS,
+    };
+
+    await secureStorageService.save("remote_config", newConfig);
+    if (Array.isArray(newConfig.ALLOWED_HOSTS) && newConfig.ALLOWED_HOSTS.length) {
+      ALLOWED_HOSTS_CACHE = newConfig.ALLOWED_HOSTS.slice();
     }
   } catch (error) {
     console.error("Could not update remote configuration:", error);
+    // Fallback to ensure defaults are set if fetch fails
+    const currentConfig = await secureStorageService.retrieve("remote_config");
+    if (!currentConfig) {
+      await secureStorageService.save("remote_config", {
+        RATE_LIMIT_PER_DAY: DEFAULTS.RATE_LIMIT_PER_DAY,
+        MAX_PROMPT_CHARS: DEFAULTS.MAX_PROMPT_CHARS,
+        DEFAULT_MODEL: DEFAULTS.DEFAULT_MODEL,
+        ALLOWED_HOSTS: DEFAULTS.ALLOWED_HOSTS,
+        MIN_ENHANCE_INTERVAL_MS: DEFAULTS.MIN_ENHANCE_INTERVAL_MS,
+      });
+      ALLOWED_HOSTS_CACHE = DEFAULTS.ALLOWED_HOSTS.slice();
+    }
   }
 }
 
@@ -337,8 +374,9 @@ async function handleProxyRequest({ prompt }, sendResponse) {
     if (!basePrompt) {
       throw new Error("Prompt is empty.");
     }
-    if (basePrompt.length > MAX_PROMPT_CHARS) {
-      throw new Error(`Prompt exceeds ${MAX_PROMPT_CHARS} characters.`);
+    const maxPromptChars = await getConfig("MAX_PROMPT_CHARS");
+    if (basePrompt.length > maxPromptChars) {
+      throw new Error(`Prompt exceeds ${maxPromptChars} characters.`);
     }
     const sanitizedPrompt = basePrompt;
     const apiUrl =
@@ -353,24 +391,7 @@ async function handleProxyRequest({ prompt }, sendResponse) {
           Authorization: `Bearer ${jwt}`,
         },
         body: JSON.stringify({
-          messages: [
-            {
-              role: "system",
-              content: `You are a pragmatic prompt optimizer. Rewrite the user's prompt so an AI can produce exactly what they want.
-
-Directives:
-- Preserve the user's intent, constraints, domain terms, code, and any quoted text. Do not change the ask.
-- Keep the original language and tone; if unclear, default to neutral and professional.
-- Do not overengineer. Be concise and focused; avoid redundancy.
-- If essential context is missing (purpose, audience, format, length, success criteria, key constraints), add only the minimal helpful details to remove ambiguity. Use reasonable defaults; avoid speculation.
-- When the request is vague, clarify the objective in one short sentence, then specify deliverable, must-have content, and constraints succinctly.
-- Never include meta commentary, explanations, labels, or special tokens (e.g., <think>). Do not use markdown fences, headings, or quotes.
-- Output only the enhanced prompt, ready to send to a model.
-
-Return only the enhanced prompt.`,
-            },
-            { role: "user", content: sanitizedPrompt },
-          ],
+          messages: [{ role: "user", content: sanitizedPrompt }],
         }),
       },
       3,
@@ -472,40 +493,27 @@ async function handleByokRequest({ prompt }, sendResponse) {
     if (!basePrompt) {
       throw new Error("Prompt is empty.");
     }
-    if (basePrompt.length > MAX_PROMPT_CHARS) {
-      throw new Error(`Prompt exceeds ${MAX_PROMPT_CHARS} characters.`);
+    const maxPromptChars = await getConfig("MAX_PROMPT_CHARS");
+    if (basePrompt.length > maxPromptChars) {
+      throw new Error(`Prompt exceeds ${maxPromptChars} characters.`);
     }
     const sanitizedPrompt = basePrompt;
+
+    const jwt = await getOrCreateJwt();
+    const apiUrl =
+      "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/api/enhance/byok";
+
     const response = await fetchWithRetry(
-      "https://openrouter.ai/api/v1/chat/completions",
+      apiUrl,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-          "HTTP-Referer": APP_HTTP_REFERER,
-          "X-Title": APP_X_TITLE,
+          Authorization: `Bearer ${jwt}`,
         },
         body: JSON.stringify({
-          model: DEFAULT_MODEL,
-          messages: [
-            {
-              role: "system",
-              content: `You are a pragmatic prompt optimizer. Rewrite the user's prompt so an AI can produce exactly what they want.
-
-Directives:
-- Preserve the user's intent, constraints, domain terms, code, and any quoted text. Do not change the ask.
-- Keep the original language and tone; if unclear, default to neutral and professional.
-- Do not overengineer. Be concise and focused; avoid redundancy.
-- If essential context is missing (purpose, audience, format, length, success criteria, key constraints), add only the minimal helpful details to remove ambiguity. Use reasonable defaults; avoid speculation.
-- When the request is vague, clarify the objective in one short sentence, then specify deliverable, must-have content, and constraints succinctly.
-- Never include meta commentary, explanations, labels, or special tokens (e.g., <think>). Do not use markdown fences, headings, or quotes.
-- Output only the enhanced prompt, ready to send to a model.
-
-Return only the enhanced prompt.`,
-            },
-            { role: "user", content: sanitizedPrompt },
-          ],
+          byokKey: apiKey,
+          messages: [{ role: "user", content: sanitizedPrompt }],
         }),
       },
       2,
@@ -513,11 +521,65 @@ Return only the enhanced prompt.`,
       500
     );
 
+    const limit = response.headers.get("X-RateLimit-Limit");
+    const remaining = response.headers.get("X-RateLimit-Remaining");
+    const reset = response.headers.get("X-RateLimit-Reset");
+    const usageCount = response.headers.get("X-Usage-Count");
+
+    if (
+      limit !== null ||
+      remaining !== null ||
+      reset !== null ||
+      usageCount !== null
+    ) {
+      const rateLimitKey = `rate_limit_status`;
+
+      const currentUsage = (await secureStorageService.retrieve(
+        rateLimitKey
+      )) || { limit: 100, remaining: 100, reset: 0, count: 0 };
+
+      const parsedLimit = parseInt(limit, 10);
+      const parsedRemaining = parseInt(remaining, 10);
+      const parsedReset = parseInt(reset, 10);
+      const parsedCount = parseInt(usageCount, 10);
+
+      const effectiveLimit = !isNaN(parsedLimit)
+        ? parsedLimit
+        : currentUsage.limit;
+      const effectiveCount = !isNaN(parsedCount)
+        ? parsedCount
+        : currentUsage.count;
+      const derivedRemaining = !isNaN(parsedRemaining)
+        ? parsedRemaining
+        : Math.max(0, effectiveLimit - effectiveCount);
+
+      const newUsage = {
+        limit: effectiveLimit,
+        remaining: derivedRemaining,
+        reset: !isNaN(parsedReset) ? parsedReset : currentUsage.reset,
+        count: effectiveCount,
+      };
+
+      await secureStorageService.save(rateLimitKey, newUsage);
+
+      try {
+        await chrome.runtime.sendMessage({
+          action: "rateLimitUpdate",
+          usage: newUsage,
+        });
+      } catch (_) {}
+    }
+
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(
-        errorData.error?.message || `OpenRouter API error: ${response.status}`
-      );
+      const message =
+        errorData?.message ||
+        errorData?.error ||
+        `Proxy service error: ${response.status}`;
+      const error = new Error(message);
+      error.status = response.status;
+      error.data = { code: errorData?.code };
+      throw error;
     }
 
     const data = await response.json();
@@ -527,9 +589,12 @@ Return only the enhanced prompt.`,
         enhancedPrompt: data.choices[0].message.content.trim(),
       });
     } else {
-      throw new Error("Invalid response from OpenRouter.");
+      throw new Error("Invalid response from proxy.");
     }
   } catch (error) {
-    sendResponse({ success: false, error: error.message });
+    sendResponse({
+      success: false,
+      error: typeof error === "object" && error && error.message ? error.message : String(error),
+    });
   }
 }

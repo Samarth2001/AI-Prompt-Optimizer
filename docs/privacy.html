@@ -37,8 +37,9 @@
     <p>
       <strong>API Keys:</strong> If you choose to use your own API key (Bring
       Your Own Key), it is stored locally on your device using the
-      `chrome.storage.local` API. This key is only used to communicate with the
-      AI service provider you select and is never sent to our servers.
+      `chrome.storage.local` API and transmitted only to the AI provider via our
+      proxy endpoint over HTTPS for the sole purpose of fulfilling your request.
+      The key is never logged or stored by our servers and is not exposed to web pages.
     </p>
     <p>
       <strong>Prompts and Context:</strong> Your prompts and any conversational
@@ -48,10 +49,9 @@
 
     <h2>Anonymous Usage Data</h2>
     <p>
-      To provide the free tier, a pseudonymous, locally generated user token is
-      sent to our proxy server. This token is used solely to prevent abuse and
-      enforce the daily rate limit of 100 requests. It is not associated with
-      any personal information, and we do not log the content of your prompts.
+      To provide the free tier, a pseudonymous session token (JWT) is stored in
+      browser session storage and sent to our proxy server to enforce rate limits.
+      It is not associated with personal information, and we do not log prompt content.
     </p>
 
     <h2>Third-Party Services</h2>

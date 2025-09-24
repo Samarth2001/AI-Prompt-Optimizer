@@ -236,7 +236,8 @@ class SecureStorageService {
       const encryptionKey = usePassphrase
         ? this.passphraseKey
         : await this.initializeEncryptionKey();
-      const encryptedValue = await cryptoService.encrypt(value, encryptionKey);
+      const plaintext = typeof value === "string" ? value : JSON.stringify(value);
+      const encryptedValue = await cryptoService.encrypt(plaintext, encryptionKey);
       await chrome.storage.local.set({ [key]: encryptedValue });
     } catch (error) {
       throw new Error(`Failed to save data: ${error.message}`);
@@ -258,7 +259,11 @@ class SecureStorageService {
         return null;
       }
       const value = await cryptoService.decrypt(result[key], encryptionKey);
-      return value;
+      try {
+        return JSON.parse(value);
+      } catch (_) {
+        return value;
+      }
     } catch (error) {
          return null;
     }

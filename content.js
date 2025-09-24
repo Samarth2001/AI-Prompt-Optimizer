@@ -124,7 +124,11 @@ function createEnhanceButton(textInput) {
   button.className = "enhance-button";
   button.textInput = textInput;
   button.type = "button";
-  button.setAttribute("aria-label", "Enhance prompt");
+  const isMac = /Mac/i.test(navigator.platform || navigator.userAgent || "");
+  const shortcut = isMac ? "⌘E" : "Ctrl+E";
+  const label = `Enhance (${shortcut})`;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("title", label);
 
   const siteStyle = window.__PE_config.getSiteStyle();
 
@@ -358,3 +362,5 @@ new MutationObserver(() => {
     setTimeout(processPage, 2000);
   }
 }).observe(document, { subtree: true, childList: true });
+
+// Turnstile overlay removed to meet least-privilege policy. No message handlers are needed here.

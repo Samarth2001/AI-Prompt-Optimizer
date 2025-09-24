@@ -97,11 +97,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function renderUsage(usage) {
-    const limit = (usage && usage.limit) || 100;
-    const remaining = (usage && typeof usage.remaining === 'number') ? usage.remaining : limit;
-    
-    usageText.textContent = `${remaining} / ${limit} remaining`;
-    usageProgress.style.width = `${(remaining / limit) * 100}%`;
+    const limit = (usage && typeof usage.limit === 'number') ? usage.limit : 100;
+    const count = (usage && typeof usage.count === 'number')
+      ? usage.count
+      : Math.max(0, limit - ((usage && typeof usage.remaining === 'number') ? usage.remaining : limit));
+    const used = Math.min(Math.max(count, 0), limit);
+
+    usageText.textContent = `${used} / ${limit} used`;
+    usageProgress.style.width = `${(used / limit) * 100}%`;
   }
 
   chrome.runtime.onMessage.addListener((msg) => {
@@ -296,6 +299,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (confirmed) {
       try {
         await chrome.storage.local.clear();
+        try { await chrome.storage.session.clear(); } catch (_) {}
         showStatus("Extension has been reset. Reloading...", "success");
         // After clearing, we must re-fetch the remote config
         await chrome.runtime.sendMessage({ action: "updateRemoteConfig" });
@@ -358,12 +362,4 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   initialize();
 });
-
-function loadTurnstileScript() {
-  const script = document.createElement("script");
-  script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
-  script.async = true;
-  script.defer = true;
-  document.head.appendChild(script);
-}
 
