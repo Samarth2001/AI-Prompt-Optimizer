@@ -24,7 +24,7 @@ new_sqlite_classes = ["TokenGate"]
 [vars]
 TURNSTILE_SITE_KEY = "0x4AAAAAABuJscKiniqQx6Re"
 APP_HTTP_REFERER = "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev"
-ALLOWED_ORIGINS = "chrome-extension://"
+ALLOWED_ORIGINS = "chrome-extension://jcnkcglepjnmblgdeeloojnbiaopammh"
 ALLOWED_HOSTS = "claude.ai,chat.openai.com,chatgpt.com,gemini.google.com,grok.com,perplexity.ai"
 MIN_ENHANCE_INTERVAL_MS = "3000"
 RATE_LIMIT_BYPASS_SUBS = ""

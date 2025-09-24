@@ -125,32 +125,27 @@ async function ensureValidJwt() {
     }
   }
 
-  let turnstileToken = "";
-  try {
-    turnstileToken = await getTurnstileTokenViaOverlay();
-  } catch (_) {
-    const redirectUrl = await chrome.identity.getRedirectURL();
-    const authUrl = `https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/turnstile?redirect_uri=${encodeURIComponent(
-      redirectUrl
-    )}`;
-    const resultUrl = await new Promise((resolve, reject) => {
-      chrome.identity.launchWebAuthFlow(
-        { url: authUrl, interactive: true },
-        (responseUrl) => {
-          if (chrome.runtime.lastError || !responseUrl) {
-            reject(chrome.runtime.lastError || new Error("Verification failed"));
-            return;
-          }
-          resolve(responseUrl);
+  const redirectUrl = await chrome.identity.getRedirectURL();
+  const authUrl = `https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/turnstile?redirect_uri=${encodeURIComponent(
+    redirectUrl
+  )}`;
+  const resultUrl = await new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow(
+      { url: authUrl, interactive: true },
+      (responseUrl) => {
+        if (chrome.runtime.lastError || !responseUrl) {
+          reject(chrome.runtime.lastError || new Error("Verification failed"));
+          return;
         }
-      );
-    });
+        resolve(responseUrl);
+      }
+    );
+  });
 
-    const tokenMatch = String(resultUrl).match(/[#&]token=([^&]+)/);
-    turnstileToken = tokenMatch ? decodeURIComponent(tokenMatch[1]) : "";
-    if (!turnstileToken)
-      throw new Error("Turnstile verification failed: no token");
-  }
+  const tokenMatch = String(resultUrl).match(/[#&]token=([^&]+)/);
+  const turnstileToken = tokenMatch ? decodeURIComponent(tokenMatch[1]) : "";
+  if (!turnstileToken)
+    throw new Error("Turnstile verification failed: no token");
 
   const apiUrl =
     "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/api/token";
@@ -167,48 +162,7 @@ async function ensureValidJwt() {
   return data.token;
 }
 
-async function getTurnstileTokenViaOverlay() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.id) throw new Error("No active tab");
-  const embedUrl = "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/turnstile-embed";
-
-  return new Promise((resolve, reject) => {
-    let done = false;
-    const timeout = setTimeout(() => {
-      if (done) return;
-      done = true;
-      chrome.runtime.onMessage.removeListener(onMsg);
-      reject(new Error("Turnstile overlay timeout"));
-    }, 60000);
-
-    function finish(ok, payload) {
-      if (done) return;
-      done = true;
-      clearTimeout(timeout);
-      chrome.runtime.onMessage.removeListener(onMsg);
-      if (ok) resolve(payload);
-      else reject(new Error(payload || "Turnstile canceled"));
-    }
-
-    function onMsg(request, sender, sendResponse) {
-      if (!isTrustedSender(sender)) return false;
-      if (request && request.action === "turnstileToken" && request.token) {
-        sendResponse({ ok: true });
-        finish(true, String(request.token));
-        return true;
-      }
-      if (request && request.action === "turnstileCanceled") {
-        sendResponse({ ok: true });
-        finish(false, request.reason);
-        return true;
-      }
-      return false;
-    }
-
-    chrome.runtime.onMessage.addListener(onMsg);
-    chrome.tabs.sendMessage(tab.id, { action: "startTurnstileOverlay", embedUrl }, () => {});
-  });
-}
+// Overlay-based token retrieval removed to comply with least-privilege requirements.
 
 function decodeJwt(token) {
   try {

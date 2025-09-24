@@ -7,8 +7,7 @@
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",
-    "identity",
-    "tabs"
+    "identity"
   ],
   "host_permissions": [
     "https://prompt-enhancer-worker.prompt-enhance-api.workers.dev/*"
