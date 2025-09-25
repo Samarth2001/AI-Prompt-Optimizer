@@ -9,6 +9,8 @@ Enhances user prompts on popular AI chat sites via a Chrome extension backed by 
 - Cloudflare Turnstile for human verification
 - BYOK mode with client-side AES-GCM encryption for stored keys
 
+### Chrome Web Store
+- Install: [Chrome Web Store](https://chromewebstore.google.com/detail/prompt-enhancer/jcnkcglepjnmblgdeeloojnbiaopammh)
 ### Prerequisites
 - Node.js 18+ and npm
 - Cloudflare account and Wrangler CLI v4+
