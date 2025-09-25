@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Prompt Enhancer",
-  "short_name": "Enhancer",
+  "name": "AI Prompt Optimizer",
+  "short_name": "Optimizer",
   "version": "1.0",
   "description": "Enhances prompts on various websites. Permission justification: 'storage' is used to save preferences and passphrase-protected keys.",
   "minimum_chrome_version": "102",
