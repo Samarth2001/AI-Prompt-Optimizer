@@ -548,8 +548,7 @@ app.use("/api/enhance", async (c, next) => {
         headers
       );
     }
-  } catch (e) {
-    console.error("Durable Object error:", e);
+    } catch (e) {
     const errOrigin = (c.get("corsOrigin") as string) || "*";
     return jsonError(
       c,
@@ -771,7 +770,6 @@ app.post("/api/token", async (c) => {
 
     const secret = (c.env.TURNSTILE_SECRET_KEY || "").trim();
     if (!secret) {
-      console.error("Missing or empty TURNSTILE_SECRET_KEY in worker environment");
       return jsonError(
         c,
         500,
@@ -806,7 +804,6 @@ app.post("/api/token", async (c) => {
 
     const jwtSecret = (c.env.JWT_SECRET || "").trim();
     if (!jwtSecret) {
-      console.error("Missing or empty JWT_SECRET in worker environment");
       return jsonError(
         c,
         500,
@@ -826,7 +823,6 @@ app.post("/api/token", async (c) => {
     return c.json({ token }, 200, buildBaseHeaders(origin));
   } catch (e: any) {
     const origin = c.get("corsOrigin") || "*";
-    console.error("/api/token error:", e?.message || e);
     logServerError(c, "INTERNAL_ERROR");
     return c.json(
       { code: "INTERNAL_ERROR", message: "Failed to issue token", details: e?.message || String(e) },
@@ -1014,9 +1010,6 @@ app.post("/api/enhance", async (c) => {
       if (response.status >= 500) {
         logServerError(c, "UPSTREAM_ERROR");
       }
-      if (response.status >= 500) {
-        logServerError(c, "UPSTREAM_ERROR");
-      }
       return new Response(
         JSON.stringify({
           code: "UPSTREAM_ERROR",
@@ -1123,7 +1116,6 @@ app.use("/api/enhance/byok", async (c, next) => {
       );
     }
   } catch (e) {
-    console.error("Durable Object error:", e);
     const errOrigin = (c.get("corsOrigin") as string) || "*";
     return jsonError(
       c,

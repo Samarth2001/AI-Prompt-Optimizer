@@ -92,6 +92,33 @@ async function handleEnhanceClick(event) {
     const enhancedPrompt = await enhancePrompt(currentText);
     if (enhancedPrompt) {
       window.__PE_utils.setTextToElement(textInput, enhancedPrompt);
+      try {
+        if (
+          textInput.tagName === "TEXTAREA" ||
+          (textInput.tagName === "INPUT" &&
+            (textInput.type === "text" || textInput.type === "search"))
+        ) {
+          textInput.focus({ preventScroll: true });
+          const len = textInput.value.length;
+          try {
+            textInput.setSelectionRange(len, len);
+          } catch {}
+        } else if (textInput.isContentEditable) {
+          textInput.focus({ preventScroll: true });
+          try {
+            const range = document.createRange();
+            range.selectNodeContents(textInput);
+            range.collapse(false);
+            const sel = window.getSelection();
+            if (sel) {
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
+          } catch {}
+        } else {
+          textInput.focus({ preventScroll: true });
+        }
+      } catch {}
       button.textContent = "✓";
       button.style.fontSize = "10px";
       button.style.color = "#28a745";
@@ -126,9 +153,10 @@ function createEnhanceButton(textInput) {
   button.type = "button";
   const isMac = /Mac/i.test(navigator.platform || navigator.userAgent || "");
   const shortcut = isMac ? "⌘E" : "Ctrl+E";
-  const label = `Enhance (${shortcut})`;
+  const label = `Optimize prompt (${shortcut})`;
   button.setAttribute("aria-label", label);
-  button.setAttribute("title", label);
+  button.setAttribute("aria-keyshortcuts", isMac ? "Meta+E" : "Control+E");
+  button.setAttribute("data-tooltip", "Optimize prompt");
 
   const siteStyle = window.__PE_config.getSiteStyle();
 
@@ -217,6 +245,8 @@ function addGlobalCSS() {
     .enhance-button:active { transform: translateY(0) scale(1) !important; box-shadow: ${siteStyle.shadow} !important; }
     .enhance-button > * { pointer-events: none !important; }
     .enhance-button svg { width: 66% !important; height: 66% !important; fill: white !important; transition: all 0.3s ease !important; }
+    .enhance-button[data-tooltip]::after { content: attr(data-tooltip); position: absolute; bottom: calc(100% + 8px); right: 0; max-width: 240px; background: rgba(0,0,0,0.8) !important; color: #fff !important; -webkit-text-fill-color: #fff !important; mix-blend-mode: normal !important; text-shadow: 0 1px 1px rgba(0,0,0,0.6) !important; padding: 6px 8px; border-radius: 6px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; font-size: 12px; line-height: 1.2; white-space: nowrap; opacity: 0; transform: translateY(4px); pointer-events: none; transition: opacity 0.12s ease, transform 0.12s ease; z-index: 2147483647 !important; }
+    .enhance-button[data-tooltip]:hover::after { opacity: 1; transform: translateY(0); }
     .prompt-enhancer-toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); padding: 12px 20px; border-radius: 8px; background: #262626; color: #fafafa; font-size: 14px; z-index: 10000; opacity: 0; transition: all 0.4s ease; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
     .prompt-enhancer-toast.show { opacity: 1; transform: translate(-50%, 10px); }
     .prompt-enhancer-toast.error { background: #ef4444; }

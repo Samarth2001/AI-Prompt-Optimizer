@@ -27,7 +27,6 @@ const DEFAULTS = {
 };
 
 let lastEnhanceAt = 0;
-const APP_X_TITLE = "Enhance Prompt";
 
 let ALLOWED_HOSTS_CACHE = DEFAULTS.ALLOWED_HOSTS.slice();
 
@@ -351,7 +350,6 @@ async function updateRemoteConfig() {
       ALLOWED_HOSTS_CACHE = newConfig.ALLOWED_HOSTS.slice();
     }
   } catch (error) {
-    console.error("Could not update remote configuration:", error);
     // Fallback to ensure defaults are set if fetch fails
     const currentConfig = await secureStorageService.retrieve("remote_config");
     if (!currentConfig) {

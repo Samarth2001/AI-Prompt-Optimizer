@@ -54,15 +54,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  function decodeJwt(token) {
-    try {
-      const [, payload] = token.split(".");
-      const decoded = atob(payload);
-      return JSON.parse(decoded);
-    } catch {
-      return null;
-    }
-  }
+  
 
   async function updateUIMode(mode, hasApiKey) {
     document.body.dataset.mode = mode;

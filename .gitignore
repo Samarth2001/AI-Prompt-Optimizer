@@ -118,3 +118,4 @@ docs/Future-Scope.md
 .github/copilot-instructions.md
 .github/instructions/ui.instructions.md
 .cursor/rules/
+.cursorignore

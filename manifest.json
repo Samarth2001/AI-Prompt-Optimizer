@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "AI Prompt Optimizer",
   "short_name": "Optimizer",
-  "version": "1.0",
-  "description": "Enhances prompts on various websites. Permission justification: 'storage' is used to save preferences and passphrase-protected keys.",
+  "version": "1.0.1",
+  "description": "Refine prompts across AI chat platforms with one click. Secure proxy and optional BYOK.",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage",
